@@ -1333,3 +1333,56 @@ fn pane_border_drag_docks_beside_hovered_pane_or_swaps_in_middle() {
                     && params.target_pane_id.as_deref() == Some("pane_2"))
     )));
 }
+
+#[test]
+fn sidebar_agent_click_focuses_on_release_and_drag_docks_it_beside_a_pane() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("pane frame");
+    let row = Rect::new(0, 15, 20, 1);
+    state.hits.agents = vec![(row, "pane_9".into())];
+    let pane = state.hits.panes[0].clone();
+    let mouse = |kind, column, row| {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+
+    let down = state.handle_raw_events(vec![mouse(MouseEventKind::Down(MouseButton::Left), 2, 15)]);
+    assert!(
+        down.actions.is_empty(),
+        "a press alone must not switch tabs"
+    );
+    let click = state.handle_raw_events(vec![mouse(MouseEventKind::Up(MouseButton::Left), 2, 15)]);
+    assert!(click.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(&request.method, crate::api::schema::Method::PaneFocus(target)
+                if target.pane_id == "pane_9")
+    )));
+
+    state.hits.agents = vec![(row, "pane_9".into())];
+    state.handle_raw_events(vec![mouse(MouseEventKind::Down(MouseButton::Left), 2, 15)]);
+    state.handle_raw_events(vec![mouse(MouseEventKind::Drag(MouseButton::Left), 4, 15)]);
+    let drop_at = (pane.rect.x, pane.rect.y);
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        drop_at.0,
+        drop_at.1,
+    )]);
+    let release = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        drop_at.0,
+        drop_at.1,
+    )]);
+    assert!(release.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(&request.method, crate::api::schema::Method::PaneDock(params)
+                if params.source_pane_id == "pane_9" && params.target_pane_id == "pane_1")
+    )));
+}

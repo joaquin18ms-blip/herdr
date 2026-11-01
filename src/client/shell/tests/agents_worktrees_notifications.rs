@@ -735,8 +735,14 @@ fn agent_sidebar_honors_priority_symbols_tokens_and_stable_hits() {
     );
 
     let first = state.hits.agents[0].0;
-    let click = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
         kind: MouseEventKind::Down(MouseButton::Left),
+        column: first.x,
+        row: first.y,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    let click = state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Up(MouseButton::Left),
         column: first.x,
         row: first.y,
         modifiers: KeyModifiers::empty(),

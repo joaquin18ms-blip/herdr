@@ -183,6 +183,8 @@ pub(super) struct ClientPaneDockPress {
     pub(super) pane_id: String,
     pub(super) start_column: u16,
     pub(super) start_row: u16,
+    /// A press on a sidebar agent row: a plain click focuses that pane.
+    pub(super) focus_on_release: bool,
 }
 
 pub(super) struct ClientTabPress {

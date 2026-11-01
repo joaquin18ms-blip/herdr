@@ -280,3 +280,42 @@ async fn public_pane_dock_moves_pane_beside_target_in_same_tab() {
     assert!(rect(third).y < rect(first).y);
     assert_eq!(rect(second).height, 40);
 }
+
+#[tokio::test]
+async fn public_pane_dock_pulls_pane_from_another_tab_onto_requested_side() {
+    let mut server = pane_move_server();
+    // Tab 0 ("first" root) and tab 1 ("remaining") each hold one pane.
+    let target = server.app.state.workspaces[0].tabs[0].root_pane;
+    let source = server.app.state.workspaces[0].tabs[1].root_pane;
+    let source_id = server.app.public_pane_id(0, source).unwrap();
+    let target_id = server.app.public_pane_id(0, target).unwrap();
+
+    let (respond_to, response_rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(crate::api::ApiRequestMessage {
+        request: crate::api::schema::Request {
+            id: "dock-cross-tab".into(),
+            method: crate::api::schema::Method::PaneDock(crate::api::schema::PaneDockParams {
+                source_pane_id: source_id,
+                target_pane_id: target_id,
+                side: crate::api::schema::PaneDirection::Left,
+            }),
+        },
+        respond_to,
+        response_write_complete: None,
+    });
+    let response = response_rx.recv().expect("pane dock response");
+    assert!(
+        serde_json::from_str::<SuccessResponse>(&response).is_ok(),
+        "{response}"
+    );
+    let workspace = &server.app.state.workspaces[0];
+    assert_eq!(workspace.tabs.len(), 1, "emptied source tab closes");
+    let rects = workspace.tabs[0]
+        .layout
+        .panes(ratatui::layout::Rect::new(0, 0, 100, 40));
+    assert_eq!(rects.len(), 2);
+    let target_rect = rects.iter().find(|info| info.id == target).unwrap().rect;
+    let moved_rect = rects.iter().find(|info| info.id != target).unwrap().rect;
+    assert!(moved_rect.x < target_rect.x);
+    assert_eq!(moved_rect.y, target_rect.y);
+}

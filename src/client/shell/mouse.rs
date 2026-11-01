@@ -1252,8 +1252,30 @@ impl ClientShellState {
                     }
                     return;
                 }
-                Some(ClientChromeDrag::Tab { .. }) => {
+                Some(ClientChromeDrag::Tab { tab_id, .. }) => {
                     let insert_index = self.tab_drop_index_at(point);
+                    let tab_pane_id = insert_index
+                        .is_none()
+                        .then(|| {
+                            self.snapshot.as_deref().and_then(|snapshot| {
+                                snapshot
+                                    .panes
+                                    .iter()
+                                    .find(|pane| &pane.tab_id == tab_id)
+                                    .map(|pane| pane.pane_id.clone())
+                            })
+                        })
+                        .flatten();
+                    if let Some(source_pane_id) = tab_pane_id {
+                        if let Some(target) = self.pane_dock_target_at(&source_pane_id, point) {
+                            self.chrome_drag = Some(ClientChromeDrag::PaneDock {
+                                source_pane_id,
+                                target: Some(target),
+                            });
+                            outcome.repaint = true;
+                            return;
+                        }
+                    }
                     if let Some(ClientChromeDrag::Tab {
                         insert_index: current,
                         ..
@@ -1484,7 +1506,15 @@ impl ClientShellState {
                 self.finish_endpoint_workspace_press(press, outcome);
                 return;
             }
-            if self.pane_dock_press.take().is_some() {
+            if let Some(press) = self.pane_dock_press.take() {
+                if press.focus_on_release {
+                    self.push_endpoint_method(
+                        crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                            pane_id: press.pane_id,
+                        }),
+                        outcome,
+                    );
+                }
                 return;
             }
             if let Some(press) = self.tab_press.take() {
@@ -2265,12 +2295,13 @@ impl ClientShellState {
                     .find(|(rect, _)| super::contains(*rect, point))
                     .map(|(_, pane_id)| pane_id.clone());
                 if let Some(pane_id) = agent_pane_id {
-                    self.push_endpoint_method(
-                        crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
-                            pane_id,
-                        }),
-                        outcome,
-                    );
+                    // Focus on release, so the row can also be dragged onto a pane.
+                    self.pane_dock_press = Some(ClientPaneDockPress {
+                        pane_id,
+                        start_column: mouse.column,
+                        start_row: mouse.row,
+                        focus_on_release: true,
+                    });
                     return;
                 }
                 let scrollbar_hit = self
@@ -2354,6 +2385,7 @@ impl ClientShellState {
                             pane_id: hit.pane_id.clone(),
                             start_column: mouse.column,
                             start_row: mouse.row,
+                            focus_on_release: false,
                         });
                         self.push_endpoint_method(
                             crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {

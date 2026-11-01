@@ -959,6 +959,13 @@ impl App {
                         self.state.workspaces[target_ws_idx].find_tab_index_for_pane(pane_id)?;
                     Some((target_ws_idx, target_tab_idx, pane_id))
                 });
+        // From another tab: move it in beside the target first, then dock it on
+        // the requested side within the target tab.
+        if let Some((target_ws_idx, target_tab_idx, _)) = target {
+            if target_ws_idx != ws_idx || target_tab_idx != tab_idx {
+                return self.dock_pane_from_other_tab(id, params, target_ws_idx, target_tab_idx);
+            }
+        }
         let (target_pane_id, reason) = match target {
             None => (None, Some(PaneSwapReason::NotFound)),
             Some((_, _, pane_id)) if pane_id == source_pane_id => {
@@ -1023,6 +1030,54 @@ impl App {
                     focused_pane_id,
                     layout,
                 },
+            },
+        )
+    }
+
+    fn dock_pane_from_other_tab(
+        &mut self,
+        id: String,
+        params: PaneDockParams,
+        target_ws_idx: usize,
+        target_tab_idx: usize,
+    ) -> String {
+        let Some(tab_id) = self.public_tab_id(target_ws_idx, target_tab_idx) else {
+            return encode_error(id, "tab_not_found", "target tab not found");
+        };
+        let split = match params.side {
+            PaneDirection::Left | PaneDirection::Right => crate::api::schema::SplitDirection::Right,
+            PaneDirection::Up | PaneDirection::Down => crate::api::schema::SplitDirection::Down,
+        };
+        let response = self.handle_pane_move(
+            id.clone(),
+            PaneMoveParams {
+                pane_id: params.source_pane_id,
+                destination: PaneMoveDestination::Tab {
+                    tab_id,
+                    target_pane_id: Some(params.target_pane_id.clone()),
+                    split,
+                    ratio: Some(0.5),
+                },
+                focus: true,
+            },
+        );
+        let moved_pane_id =
+            match serde_json::from_str::<crate::api::schema::SuccessResponse>(&response) {
+                Ok(crate::api::schema::SuccessResponse {
+                    result: ResponseResult::PaneMove { move_result },
+                    ..
+                }) if move_result.changed => move_result.pane.pane_id,
+                _ => return response,
+            };
+        if matches!(params.side, PaneDirection::Right | PaneDirection::Down) {
+            return response;
+        }
+        self.handle_pane_dock(
+            id,
+            PaneDockParams {
+                source_pane_id: moved_pane_id,
+                target_pane_id: params.target_pane_id,
+                side: params.side,
             },
         )
     }
