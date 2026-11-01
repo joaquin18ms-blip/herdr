@@ -290,6 +290,46 @@ impl TileLayout {
         true
     }
 
+    /// Detach `moved` and re-insert it beside `target` on `side`, splitting
+    /// `target` in half. Focus follows the moved pane.
+    pub fn dock_pane(&mut self, moved: PaneId, target: PaneId, side: NavDirection) -> bool {
+        if moved == target {
+            return false;
+        }
+        let ids = self.pane_ids();
+        if !ids.contains(&moved) || !ids.contains(&target) {
+            return false;
+        }
+        let placeholder = PaneId::from_raw(0);
+        let old = std::mem::replace(&mut self.root, Node::Pane(placeholder));
+        let Some(new_root) = remove_pane(old, moved) else {
+            return false;
+        };
+        self.root = new_root;
+        let Some(node) = find_pane_mut(&mut self.root, target) else {
+            return false;
+        };
+        let (direction, moved_first) = match side {
+            NavDirection::Left => (Direction::Horizontal, true),
+            NavDirection::Right => (Direction::Horizontal, false),
+            NavDirection::Up => (Direction::Vertical, true),
+            NavDirection::Down => (Direction::Vertical, false),
+        };
+        let (first, second) = if moved_first {
+            (moved, target)
+        } else {
+            (target, moved)
+        };
+        *node = Node::Split {
+            direction,
+            ratio: 0.5,
+            first: Box::new(Node::Pane(first)),
+            second: Box::new(Node::Pane(second)),
+        };
+        self.set_focus(moved);
+        true
+    }
+
     /// Set the ratio of a split node at the given path.
     pub fn set_ratio_at(&mut self, path: &[bool], ratio: f32) -> bool {
         set_ratio_at(&mut self.root, path, ratio.clamp(0.1, 0.9))
@@ -974,6 +1014,37 @@ mod tests {
         assert_eq!(after_rects[1], (pane(4), before_rects[1].1));
         assert_eq!(after_rects[2], before_rects[2]);
         assert_eq!(after_rects[3], (pane(2), before_rects[3].1));
+    }
+
+    #[test]
+    fn dock_pane_moves_pane_beside_target_on_each_side() {
+        // sample: 1 | (2 / (3 | 4)). Dock 4 to the left of 1.
+        let mut layout = sample_layout();
+        assert!(layout.dock_pane(pane(4), pane(1), NavDirection::Left));
+        assert_eq!(layout.pane_count(), 4);
+        assert_eq!(layout.focused(), pane(4));
+        let four = pane_rect(&layout, pane(4));
+        let one = pane_rect(&layout, pane(1));
+        assert_eq!(four.y, one.y);
+        assert!(four.x < one.x);
+        assert_eq!(pane_rect(&layout, pane(3)).width, 70);
+
+        // Dock 1 below 2.
+        assert!(layout.dock_pane(pane(1), pane(2), NavDirection::Down));
+        let one = pane_rect(&layout, pane(1));
+        let two = pane_rect(&layout, pane(2));
+        assert_eq!(one.x, two.x);
+        assert!(one.y > two.y);
+    }
+
+    #[test]
+    fn dock_pane_is_noop_for_same_or_missing_pane() {
+        let mut layout = sample_layout();
+        let before = pane_rects(&layout);
+        assert!(!layout.dock_pane(pane(2), pane(2), NavDirection::Left));
+        assert!(!layout.dock_pane(pane(2), pane(99), NavDirection::Left));
+        assert!(!layout.dock_pane(pane(99), pane(2), NavDirection::Left));
+        assert_eq!(pane_rects(&layout), before);
     }
 
     #[test]

@@ -1230,3 +1230,106 @@ fn context_menu_keyboard_and_outside_click_are_client_owned() {
     assert!(outside.repaint);
     assert!(state.overlay.is_none());
 }
+
+#[test]
+fn pane_border_drag_docks_beside_hovered_pane_or_swaps_in_middle() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    let template = pane_surface.panes[0].clone();
+    let bordered = |pane_id: &str, x: u16| PaneSurfacePane {
+        pane_id: pane_id.into(),
+        rect: SurfaceRect {
+            x,
+            y: 0,
+            width: 40,
+            height: 19,
+        },
+        inner_rect: SurfaceRect {
+            x: x + 1,
+            y: 1,
+            width: 38,
+            height: 17,
+        },
+        ..template.clone()
+    };
+    pane_surface.panes = vec![bordered("pane_1", 0), bordered("pane_2", 40)];
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("two pane surface");
+    let source = state.hits.panes[0].clone();
+    let target = state.hits.panes[1].clone();
+    let mouse = |kind, column, row, modifiers| {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers,
+        })
+    };
+
+    // Grab pane_1 by its top border and drop it on pane_2's right edge.
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        source.rect.x + 5,
+        source.rect.y,
+        KeyModifiers::empty(),
+    )]);
+    assert!(state.selection.is_none());
+    let right_edge = (target.rect.right() - 2, target.rect.y + 9);
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        right_edge.0,
+        right_edge.1,
+        KeyModifiers::empty(),
+    )]);
+    assert!(matches!(
+        &state.chrome_drag,
+        Some(ClientChromeDrag::PaneDock { target: Some(target), .. })
+            if target.pane_id == "pane_2"
+                && target.side == Some(crate::api::schema::PaneDirection::Right)
+    ));
+    state.compose(106, 20).expect("preview frame");
+    let release = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        right_edge.0,
+        right_edge.1,
+        KeyModifiers::empty(),
+    )]);
+    assert!(release.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(&request.method, crate::api::schema::Method::PaneDock(params)
+                if params.source_pane_id == "pane_1"
+                    && params.target_pane_id == "pane_2"
+                    && params.side == crate::api::schema::PaneDirection::Right)
+    )));
+    assert!(state.chrome_drag.is_none());
+
+    // Alt-drag from inside the pane and drop in the middle swaps.
+    let middle = (target.rect.x + 20, target.rect.y + 9);
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        source.inner_rect.x + 3,
+        source.inner_rect.y + 3,
+        KeyModifiers::ALT,
+    )]);
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        middle.0,
+        middle.1,
+        KeyModifiers::ALT,
+    )]);
+    let release = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        middle.0,
+        middle.1,
+        KeyModifiers::ALT,
+    )]);
+    assert!(release.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(&request.method, crate::api::schema::Method::PaneSwap(params)
+                if params.source_pane_id.as_deref() == Some("pane_1")
+                    && params.target_pane_id.as_deref() == Some("pane_2"))
+    )));
+}

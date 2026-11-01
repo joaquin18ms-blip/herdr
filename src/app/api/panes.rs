@@ -3,7 +3,7 @@ use bytes::Bytes;
 use crate::api::schema::{
     EventData, EventEnvelope, EventKind, PaneClearAgentAuthorityParams, PaneCopyMotion,
     PaneCopyMotionParams, PaneCopySearchDirection, PaneCopySearchParams, PaneCurrentParams,
-    PaneDirection, PaneEdgesParams, PaneEdgesResult, PaneFocusDirectionParams,
+    PaneDirection, PaneDockParams, PaneEdgesParams, PaneEdgesResult, PaneFocusDirectionParams,
     PaneFocusDirectionReason, PaneFocusDirectionResult, PaneInfo, PaneInputSetParams,
     PaneLayoutPane, PaneLayoutParams, PaneLayoutRect, PaneLayoutSnapshot, PaneLayoutSplit,
     PaneListParams, PaneMoveDestination, PaneMoveParams, PaneMoveReason, PaneMoveResult,
@@ -921,6 +921,89 @@ impl App {
                 .or(Some(raw)),
             None => target_pane_id.and_then(|pane_id| self.public_pane_id(ws_idx, pane_id)),
         };
+        let Some(layout) = self.pane_layout_snapshot(ws_idx, tab_idx) else {
+            return encode_error(id, "pane_layout_unavailable", "pane layout unavailable");
+        };
+        let focused_pane_id = layout.focused_pane_id.clone();
+        if changed {
+            self.emit_layout_updated_snapshot(layout.clone());
+        }
+
+        encode_success(
+            id,
+            ResponseResult::PaneSwap {
+                swap: PaneSwapResult {
+                    changed,
+                    reason,
+                    source_pane_id: source_public_id,
+                    target_pane_id: target_public_id,
+                    focused_pane_id,
+                    layout,
+                },
+            },
+        )
+    }
+
+    pub(super) fn handle_pane_dock(&mut self, id: String, params: PaneDockParams) -> String {
+        let Some((ws_idx, source_pane_id)) = self.parse_pane_id(&params.source_pane_id) else {
+            return pane_not_found(id, &params.source_pane_id);
+        };
+        let Some(tab_idx) = self.state.workspaces[ws_idx].find_tab_index_for_pane(source_pane_id)
+        else {
+            return pane_not_found(id, &params.source_pane_id);
+        };
+        let target =
+            self.parse_pane_id(&params.target_pane_id)
+                .and_then(|(target_ws_idx, pane_id)| {
+                    let target_tab_idx =
+                        self.state.workspaces[target_ws_idx].find_tab_index_for_pane(pane_id)?;
+                    Some((target_ws_idx, target_tab_idx, pane_id))
+                });
+        let (target_pane_id, reason) = match target {
+            None => (None, Some(PaneSwapReason::NotFound)),
+            Some((_, _, pane_id)) if pane_id == source_pane_id => {
+                (Some(pane_id), Some(PaneSwapReason::SamePane))
+            }
+            Some((target_ws_idx, target_tab_idx, pane_id))
+                if target_ws_idx != ws_idx || target_tab_idx != tab_idx =>
+            {
+                (Some(pane_id), Some(PaneSwapReason::CrossTab))
+            }
+            Some((_, _, pane_id)) => (Some(pane_id), None),
+        };
+        let side = match params.side {
+            PaneDirection::Left => NavDirection::Left,
+            PaneDirection::Right => NavDirection::Right,
+            PaneDirection::Up => NavDirection::Up,
+            PaneDirection::Down => NavDirection::Down,
+        };
+
+        let mut changed = false;
+        if let (None, Some(target_pane_id)) = (&reason, target_pane_id) {
+            let previous_focus = self.state.current_pane_focus_target();
+            if let Some(tab) = self
+                .state
+                .workspaces
+                .get_mut(ws_idx)
+                .and_then(|ws| ws.tabs.get_mut(tab_idx))
+            {
+                changed = tab.layout.dock_pane(source_pane_id, target_pane_id, side);
+            }
+            if changed {
+                self.state.switch_workspace_tab(ws_idx, tab_idx);
+                self.state
+                    .record_pane_focus_change(previous_focus, ws_idx, source_pane_id);
+                self.state.mark_session_dirty();
+                self.schedule_session_save();
+            }
+        }
+
+        let source_public_id = self
+            .public_pane_id(ws_idx, source_pane_id)
+            .unwrap_or(params.source_pane_id);
+        let target_public_id = target
+            .and_then(|(target_ws_idx, _, pane_id)| self.public_pane_id(target_ws_idx, pane_id))
+            .or(Some(params.target_pane_id));
         let Some(layout) = self.pane_layout_snapshot(ws_idx, tab_idx) else {
             return encode_error(id, "pane_layout_unavailable", "pane layout unavailable");
         };

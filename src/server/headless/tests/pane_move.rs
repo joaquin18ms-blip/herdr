@@ -233,3 +233,50 @@ async fn public_pane_move_without_effective_focus_preserves_client_views() {
         shutdown_test_runtimes(&mut server);
     }
 }
+
+#[tokio::test]
+async fn public_pane_dock_moves_pane_beside_target_in_same_tab() {
+    let mut server = test_headless_server();
+    let mut ws = crate::workspace::Workspace::test_new("dock");
+    let first = ws.tabs[0].root_pane;
+    let second = ws.test_split(ratatui::layout::Direction::Horizontal);
+    let third = ws.test_split(ratatui::layout::Direction::Vertical);
+    server.app.state.workspaces = vec![ws];
+    server.app.state.ensure_test_terminals();
+    server.app.state.active = Some(0);
+    server.app.state.selected = 0;
+    server.app.state.mode = crate::app::Mode::Terminal;
+    let source_id = server.app.public_pane_id(0, third).unwrap();
+    let target_id = server.app.public_pane_id(0, first).unwrap();
+
+    let (respond_to, response_rx) = std::sync::mpsc::channel();
+    server.handle_api_request_with_shutdown_check(crate::api::ApiRequestMessage {
+        request: crate::api::schema::Request {
+            id: "dock-pane".into(),
+            method: crate::api::schema::Method::PaneDock(crate::api::schema::PaneDockParams {
+                source_pane_id: source_id.clone(),
+                target_pane_id: target_id,
+                side: crate::api::schema::PaneDirection::Up,
+            }),
+        },
+        respond_to,
+        response_write_complete: None,
+    });
+    let response = response_rx.recv().expect("pane dock response");
+    let SuccessResponse {
+        result: ResponseResult::PaneSwap { swap },
+        ..
+    } = serde_json::from_str::<SuccessResponse>(&response).expect("success response")
+    else {
+        panic!("expected pane swap result, got {response}");
+    };
+    assert!(swap.changed);
+    assert_eq!(swap.focused_pane_id, source_id);
+
+    let area = ratatui::layout::Rect::new(0, 0, 100, 40);
+    let rects = server.app.state.workspaces[0].tabs[0].layout.panes(area);
+    let rect = |id| rects.iter().find(|info| info.id == id).unwrap().rect;
+    assert_eq!(rect(third).x, rect(first).x);
+    assert!(rect(third).y < rect(first).y);
+    assert_eq!(rect(second).height, 40);
+}

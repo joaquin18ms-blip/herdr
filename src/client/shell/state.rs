@@ -179,6 +179,12 @@ pub(super) struct ClientWorkspacePress {
     pub(super) start_row: u16,
 }
 
+pub(super) struct ClientPaneDockPress {
+    pub(super) pane_id: String,
+    pub(super) start_column: u16,
+    pub(super) start_row: u16,
+}
+
 pub(super) struct ClientTabPress {
     pub(super) tab_id: String,
     pub(super) workspace_id: String,
@@ -216,6 +222,11 @@ pub(super) enum ClientChromeDrag {
         source_workspace_id: String,
         target: Option<(Option<String>, u16)>,
     },
+    /// Dragging a pane onto another pane. `side` None means swap.
+    PaneDock {
+        source_pane_id: String,
+        target: Option<PaneDockTarget>,
+    },
     PaneSplit {
         hit: PaneSplitHit,
         tab_id: String,
@@ -229,6 +240,13 @@ pub(super) enum ClientChromeDrag {
         last_sent_offset: Option<usize>,
         last_sent_at: Option<std::time::Instant>,
     },
+}
+
+#[derive(Clone)]
+pub(super) struct PaneDockTarget {
+    pub(super) pane_id: String,
+    pub(super) side: Option<crate::api::schema::PaneDirection>,
+    pub(super) preview: Rect,
 }
 
 pub(super) struct WorkspaceHit {
@@ -880,6 +898,7 @@ pub(crate) struct ClientShellState {
     pub(super) chrome_drag: Option<ClientChromeDrag>,
     pub(super) workspace_press: Option<ClientWorkspacePress>,
     pub(super) tab_press: Option<ClientTabPress>,
+    pub(super) pane_dock_press: Option<ClientPaneDockPress>,
     pub(super) collapsed_groups: HashSet<String>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
     pub(super) workspace_scroll: usize,
@@ -1054,6 +1073,7 @@ impl ClientShellState {
             chrome_drag: None,
             workspace_press: None,
             tab_press: None,
+            pane_dock_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
             remote_collapsed_groups,
             workspace_scroll: 0,
@@ -1245,6 +1265,7 @@ impl ClientShellState {
         self.chrome_drag = None;
         self.workspace_press = None;
         self.tab_press = None;
+        self.pane_dock_press = None;
         self.workspace_scroll = 0;
         self.agent_scroll = 0;
         self.tab_scroll = 0;
@@ -1698,6 +1719,7 @@ impl ClientShellState {
             self.chrome_drag = None;
             self.workspace_press = None;
             self.tab_press = None;
+            self.pane_dock_press = None;
             if self.pane_mouse_gesture.as_ref().is_some_and(|gesture| {
                 gesture.hit.popup && previous_popup.as_deref() == Some(gesture.hit.pane_id.as_str())
             }) {

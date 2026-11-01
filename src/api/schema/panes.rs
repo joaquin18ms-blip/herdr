@@ -72,6 +72,14 @@ pub struct PaneSwapParams {
     pub target_pane_id: Option<String>,
 }
 
+/// Detach a pane and re-insert it beside another pane of the same tab.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneDockParams {
+    pub source_pane_id: String,
+    pub target_pane_id: String,
+    pub side: PaneDirection,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneMoveParams {
     pub pane_id: String,

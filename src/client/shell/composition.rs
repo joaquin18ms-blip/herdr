@@ -412,6 +412,50 @@ impl ClientShellState {
             }
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
+        if let Some(ClientChromeDrag::PaneDock {
+            target: Some(target),
+            ..
+        }) = &self.chrome_drag
+        {
+            let cursor = frame.cursor.clone();
+            let mut composed = frame.to_ratatui_buffer()?;
+            let area = target.preview.intersection(composed.area);
+            occlusion.cover(area);
+            let palette = &self.config.palette;
+            for y in area.top()..area.bottom() {
+                for x in area.left()..area.right() {
+                    let edge = x == area.left()
+                        || x + 1 == area.right()
+                        || y == area.top()
+                        || y + 1 == area.bottom();
+                    composed[(x, y)].set_bg(if edge {
+                        palette.accent
+                    } else {
+                        palette.surface_dim
+                    });
+                }
+            }
+            let label = if target.side.is_some() {
+                " soltar aquí "
+            } else {
+                " intercambiar "
+            };
+            let width = render::display_width(label).min(area.width);
+            let x = area.x + area.width.saturating_sub(width) / 2;
+            let y = area.y + area.height / 2;
+            render::put_text(
+                &mut composed,
+                x,
+                y,
+                width,
+                label,
+                Style::default()
+                    .fg(palette.surface_dim)
+                    .bg(palette.accent)
+                    .add_modifier(Modifier::BOLD),
+            );
+            frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
+        }
         self.render_link_hover(&mut frame, &mut occlusion);
         if self.mode == ClientShellMode::Copy {
             frame.cursor = None;

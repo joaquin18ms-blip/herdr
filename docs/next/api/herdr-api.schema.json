@@ -2570,6 +2570,26 @@
           ],
           "type": "string"
         },
+        "PaneDockParams": {
+          "description": "Detach a pane and re-insert it beside another pane of the same tab.",
+          "properties": {
+            "side": {
+              "$ref": "#/schemas/request/$defs/PaneDirection"
+            },
+            "source_pane_id": {
+              "type": "string"
+            },
+            "target_pane_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "source_pane_id",
+            "target_pane_id",
+            "side"
+          ],
+          "type": "object"
+        },
         "PaneEdgesParams": {
           "properties": {
             "pane_id": {
@@ -5457,6 +5477,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PaneSwapParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.dock",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneDockParams"
             }
           },
           "required": [

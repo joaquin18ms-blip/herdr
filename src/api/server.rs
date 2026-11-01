@@ -652,6 +652,7 @@ pub(crate) fn api_method_name(method: &Method) -> &'static str {
         Method::AgentWait(_) => "agent.wait",
         Method::PaneSplit(_) => "pane.split",
         Method::PaneSwap(_) => "pane.swap",
+        Method::PaneDock(_) => "pane.dock",
         Method::PaneMove(_) => "pane.move",
         Method::PaneZoom(_) => "pane.zoom",
         Method::PaneLayout(_) => "pane.layout",

@@ -450,6 +450,66 @@ impl ClientShellState {
         ((pointer + grab_offset - origin) as f32 / f32::from(length.max(1))).clamp(0.1, 0.9)
     }
 
+    /// Drop target for a dragged pane: the edge of the hovered pane nearest
+    /// the pointer docks beside it, the middle third swaps the two panes.
+    fn pane_dock_target_at(
+        &self,
+        source_pane_id: &str,
+        point: (u16, u16),
+    ) -> Option<PaneDockTarget> {
+        let hit = self
+            .hits
+            .panes
+            .iter()
+            .find(|hit| super::contains(hit.rect, point))?;
+        if hit.pane_id == source_pane_id {
+            return None;
+        }
+        let rect = hit.rect;
+        let fx = f32::from(point.0.saturating_sub(rect.x)) / f32::from(rect.width.max(1));
+        let fy = f32::from(point.1.saturating_sub(rect.y)) / f32::from(rect.height.max(1));
+        let middle = (1.0 / 3.0..2.0 / 3.0).contains(&fx) && (1.0 / 3.0..2.0 / 3.0).contains(&fy);
+        let half_w = rect.width / 2;
+        let half_h = rect.height / 2;
+        let (side, preview) = if middle {
+            (None, rect)
+        } else {
+            let edges = [
+                (fx, crate::api::schema::PaneDirection::Left),
+                (1.0 - fx, crate::api::schema::PaneDirection::Right),
+                (fy, crate::api::schema::PaneDirection::Up),
+                (1.0 - fy, crate::api::schema::PaneDirection::Down),
+            ];
+            let (_, side) = edges.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
+            let preview = match side {
+                crate::api::schema::PaneDirection::Left => Rect {
+                    width: half_w,
+                    ..rect
+                },
+                crate::api::schema::PaneDirection::Right => Rect {
+                    x: rect.x + half_w,
+                    width: rect.width - half_w,
+                    ..rect
+                },
+                crate::api::schema::PaneDirection::Up => Rect {
+                    height: half_h,
+                    ..rect
+                },
+                crate::api::schema::PaneDirection::Down => Rect {
+                    y: rect.y + half_h,
+                    height: rect.height - half_h,
+                    ..rect
+                },
+            };
+            (Some(side), preview)
+        };
+        Some(PaneDockTarget {
+            pane_id: hit.pane_id.clone(),
+            side,
+            preview,
+        })
+    }
+
     fn tab_drop_index_at(&self, point: (u16, u16)) -> Option<usize> {
         let snapshot = self.snapshot.as_deref()?;
         let workspace_id = snapshot.focused_workspace_id.as_deref()?;
@@ -1204,6 +1264,17 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                Some(ClientChromeDrag::PaneDock { source_pane_id, .. }) => {
+                    let target = self.pane_dock_target_at(&source_pane_id.clone(), point);
+                    if let Some(ClientChromeDrag::PaneDock {
+                        target: current, ..
+                    }) = self.chrome_drag.as_mut()
+                    {
+                        *current = target;
+                    }
+                    outcome.repaint = true;
+                    return;
+                }
                 Some(ClientChromeDrag::Workspace { .. }) => {
                     let target = self.workspace_drop_target_at(point);
                     if let Some(ClientChromeDrag::Workspace {
@@ -1237,6 +1308,23 @@ impl ClientShellState {
                 }
                 return;
             }
+            if let Some(press) = self.pane_dock_press.as_ref() {
+                let delta = mouse
+                    .column
+                    .abs_diff(press.start_column)
+                    .max(mouse.row.abs_diff(press.start_row));
+                if delta >= 1 {
+                    let source_pane_id = press.pane_id.clone();
+                    let target = self.pane_dock_target_at(&source_pane_id, point);
+                    self.pane_dock_press = None;
+                    self.chrome_drag = Some(ClientChromeDrag::PaneDock {
+                        source_pane_id,
+                        target,
+                    });
+                    outcome.repaint = true;
+                }
+                return;
+            }
             if let Some(press) = self.tab_press.as_ref() {
                 let delta = mouse
                     .column
@@ -1259,7 +1347,30 @@ impl ClientShellState {
             if let Some(drag) = self.chrome_drag.take() {
                 self.workspace_press = None;
                 self.tab_press = None;
+                self.pane_dock_press = None;
                 match drag {
+                    ClientChromeDrag::PaneDock { source_pane_id, .. } => {
+                        if let Some(target) = self.pane_dock_target_at(&source_pane_id, point) {
+                            let method = match target.side {
+                                Some(side) => crate::api::schema::Method::PaneDock(
+                                    crate::api::schema::PaneDockParams {
+                                        source_pane_id,
+                                        target_pane_id: target.pane_id,
+                                        side,
+                                    },
+                                ),
+                                None => crate::api::schema::Method::PaneSwap(
+                                    crate::api::schema::PaneSwapParams {
+                                        source_pane_id: Some(source_pane_id),
+                                        target_pane_id: Some(target.pane_id),
+                                        ..Default::default()
+                                    },
+                                ),
+                            };
+                            self.push_endpoint_method(method, outcome);
+                        }
+                        outcome.repaint = true;
+                    }
                     ClientChromeDrag::Tab {
                         tab_id,
                         workspace_id,
@@ -1371,6 +1482,9 @@ impl ClientShellState {
             }
             if let Some(press) = self.workspace_press.take() {
                 self.finish_endpoint_workspace_press(press, outcome);
+                return;
+            }
+            if self.pane_dock_press.take().is_some() {
                 return;
             }
             if let Some(press) = self.tab_press.take() {
@@ -2231,6 +2345,24 @@ impl ClientShellState {
                     .find(|hit| super::contains(hit.rect, point))
                     .cloned();
                 if let Some(hit) = pane_hit {
+                    let on_frame = !super::contains(hit.inner_rect, point);
+                    let alt = mouse
+                        .modifiers
+                        .contains(crossterm::event::KeyModifiers::ALT);
+                    if self.hits.panes.len() > 1 && (on_frame || alt) {
+                        self.pane_dock_press = Some(ClientPaneDockPress {
+                            pane_id: hit.pane_id.clone(),
+                            start_column: mouse.column,
+                            start_row: mouse.row,
+                        });
+                        self.push_endpoint_method(
+                            crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                                pane_id: hit.pane_id,
+                            }),
+                            outcome,
+                        );
+                        return;
+                    }
                     if hit.mouse_reporting && super::contains(hit.inner_rect, point) {
                         self.push_pane_mouse_event(&hit, mouse, mouse.modifiers, outcome);
                         self.pane_mouse_gesture = Some(ClientPaneMouseGesture {
