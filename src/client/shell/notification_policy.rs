@@ -239,11 +239,15 @@ impl ClientShellState {
                             }
                         })
                     });
+                    #[cfg(target_os = "macos")]
+                    let pane_id = pending.event.pane_id.clone();
                     effects.push(ClientShellNotificationEffect::System {
                         title: pending.event.title,
                         body: pending.event.body,
                         #[cfg(windows)]
                         target,
+                        #[cfg(target_os = "macos")]
+                        pane_id,
                     });
                 }
                 crate::config::ToastDelivery::Terminal | crate::config::ToastDelivery::System => {}

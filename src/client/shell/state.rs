@@ -744,6 +744,9 @@ pub(crate) enum ClientShellNotificationEffect {
         body: Option<String>,
         #[cfg(windows)]
         target: Option<ClientSystemNotificationTarget>,
+        /// Pane to focus when the macOS notification is clicked.
+        #[cfg(target_os = "macos")]
+        pane_id: Option<String>,
     },
 }
 

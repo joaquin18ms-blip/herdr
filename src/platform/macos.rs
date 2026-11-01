@@ -752,6 +752,38 @@ pub fn show_desktop_notification(title: &str, body: Option<&str>) -> std::io::Re
     show_desktop_notification_with_command(title, body, |program| Command::new(program))
 }
 
+/// Like [`show_desktop_notification`], but clicking it brings the terminal to
+/// the front and focuses `pane_id` (the agent and its conversation) instead of
+/// opening Script Editor. One notification per pane: a newer one replaces it.
+pub fn show_pane_desktop_notification(
+    title: &str,
+    body: Option<&str>,
+    pane_id: Option<&str>,
+) -> std::io::Result<bool> {
+    let pane_id = pane_id.filter(|id| {
+        !id.is_empty()
+            && id
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-'))
+    });
+    let Some(pane_id) = pane_id else {
+        return show_desktop_notification(title, body);
+    };
+    let exe = std::env::current_exe()?;
+    let exe = exe.to_string_lossy().replace('\'', "'\\''");
+    let mut command = |program: &str| Command::new(program);
+    let activate_bundle_id = verified_terminal_bundle_identifier(&mut command);
+    let mut cmd = command("terminal-notifier");
+    build_terminal_notifier_command(&mut cmd, title, body, activate_bundle_id.as_deref());
+    cmd.arg("-group").arg(format!("herdr-{pane_id}"));
+    cmd.arg("-execute")
+        .arg(format!("'{exe}' agent focus '{pane_id}' >/dev/null 2>&1"));
+    if run_notification_command(cmd).unwrap_or(false) {
+        return Ok(true);
+    }
+    show_osascript_notification(title, body, &mut command)
+}
+
 fn show_desktop_notification_with_command(
     title: &str,
     body: Option<&str>,

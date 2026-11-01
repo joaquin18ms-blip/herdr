@@ -73,10 +73,18 @@ pub(super) fn handle_shell_notification_effects(
                 body,
                 #[cfg(windows)]
                 target,
+                #[cfg(target_os = "macos")]
+                pane_id,
             } => {
                 #[cfg(windows)]
                 let result = show_system_notification(&title, body.as_deref(), target, event_tx);
-                #[cfg(not(windows))]
+                #[cfg(target_os = "macos")]
+                let result = crate::platform::show_pane_desktop_notification(
+                    &title,
+                    body.as_deref(),
+                    pane_id.as_deref(),
+                );
+                #[cfg(not(any(windows, target_os = "macos")))]
                 let result = crate::platform::show_desktop_notification(&title, body.as_deref());
                 if let Err(err) = result {
                     warn!(err = %err, "failed to emit system notification");
