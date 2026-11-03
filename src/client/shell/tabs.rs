@@ -396,7 +396,9 @@ fn tab_label(snapshot: &ClientShellSnapshot, tab: &ClientShellTab) -> String {
 }
 
 /// Marca y color del estado de la conversacion: rojo error, celeste te espera,
-/// amarillo corriendo, verde lista. `None` si en la pestana no hay agente.
+/// amarillo corriendo, verde lista sin leer. `None` (gris, sin marca) si ya se
+/// leyo o no hay agente. Radar sostiene `title_done` y `title_blocked` hasta que
+/// se abre la pestana o el agente sigue; el estado del server los suelta antes.
 fn tab_state(snapshot: &ClientShellSnapshot, tab: &ClientShellTab) -> Option<(char, Color)> {
     use crate::api::schema::AgentStatus;
     let agents = snapshot
@@ -405,18 +407,20 @@ fn tab_state(snapshot: &ClientShellSnapshot, tab: &ClientShellTab) -> Option<(ch
         .filter(|agent| agent.tab_id == tab.tab_id)
         .collect::<Vec<_>>();
     let any = |status: AgentStatus| agents.iter().any(|agent| agent.agent_status == status);
+    let has_token = |token: &str| {
+        agents
+            .iter()
+            .any(|agent| agent.tokens.iter().any(|(name, _)| name == token))
+    };
     if agents.is_empty() {
         None
-    } else if agents
-        .iter()
-        .any(|agent| agent.tokens.iter().any(|(name, _)| name == "fallo"))
-    {
+    } else if has_token("fallo") {
         Some(('✗', Color::Rgb(0xf3, 0x8b, 0xa8)))
-    } else if any(AgentStatus::Blocked) {
+    } else if any(AgentStatus::Blocked) || has_token("title_blocked") {
         Some(('?', Color::Rgb(0x89, 0xdc, 0xeb)))
     } else if any(AgentStatus::Working) {
         Some(('●', Color::Rgb(0xf9, 0xe2, 0xaf)))
-    } else if any(AgentStatus::Done) || any(AgentStatus::Idle) {
+    } else if any(AgentStatus::Done) || has_token("title_done") {
         Some(('✓', Color::Rgb(0xa6, 0xe3, 0xa1)))
     } else {
         None
