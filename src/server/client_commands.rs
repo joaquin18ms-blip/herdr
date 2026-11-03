@@ -22,6 +22,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "pane.close",
     "pane.copy_motion",
     "pane.copy_search",
+    "pane.dock",
     "pane.edit_scrollback",
     "pane.focus",
     "pane.focus_direction",
@@ -432,5 +433,11 @@ mod tests {
         }
 
         assert_eq!(received, response.as_bytes());
+    }
+
+    #[test]
+    fn client_shell_can_request_pane_dock() {
+        // El arrastre del cliente lo manda por el endpoint; sin esto, soltar en un lado se rechaza.
+        assert!(supports_client_shell_method_name("pane.dock"));
     }
 }
