@@ -1,4 +1,5 @@
 use super::*;
+use ratatui::style::Color;
 
 const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
 const MIN_TAB_STRIP_WIDTH: u16 =
@@ -24,13 +25,14 @@ pub(crate) fn render_tab_bar(
     let desired_widths = tabs
         .iter()
         .map(|tab| {
-            let label = tab_label(tab);
+            let label = tab_label(snapshot, tab);
             display_width(&label).saturating_add(4).max(MIN_TAB_WIDTH)
         })
         .collect::<Vec<_>>();
     let content = tab_bar_content_area(snapshot, area);
     let mouse_chrome = config.mouse_capture;
     let new_tab_width = if mouse_chrome { NEW_TAB_WIDTH } else { 0 };
+    let desired_widths = fit_tab_widths(desired_widths, content.width.saturating_sub(new_tab_width));
     let desired_total = desired_widths
         .iter()
         .copied()
@@ -92,7 +94,7 @@ pub(crate) fn render_tab_bar(
     let mut first_visible = None;
     let mut last_visible = None;
     for (index, tab) in tabs.iter().enumerate().skip(*tab_scroll) {
-        let name = tab_label(tab);
+        let name = tab_label(snapshot, tab);
         let desired = desired_widths[index];
         let remaining = tab_right.saturating_sub(x);
         let width = desired.min(remaining);
@@ -100,7 +102,17 @@ pub(crate) fn render_tab_bar(
             break;
         }
         let rect = Rect::new(x, area.y, width, 1);
-        let style = if tab.focused {
+        let state = tab_state(snapshot, tab);
+        let style = if let Some((_, color)) = state {
+            if tab.focused {
+                Style::default()
+                    .fg(Color::Rgb(0x1e, 0x1e, 0x2e))
+                    .bg(color)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(color).bg(palette.surface0)
+            }
+        } else if tab.focused {
             let base = Style::default()
                 .fg(panel_contrast_fg(palette))
                 .bg(palette.accent);
@@ -371,17 +383,76 @@ fn max_tab_scroll(widths: &[u16], available: u16) -> usize {
     start
 }
 
-fn tab_label(tab: &ClientShellTab) -> String {
-    if tab.zoomed {
+fn tab_label(snapshot: &ClientShellSnapshot, tab: &ClientShellTab) -> String {
+    let label = if tab.zoomed {
         format!("{} Z", tab.label)
     } else {
         tab.label.clone()
+    };
+    match tab_state(snapshot, tab) {
+        Some((mark, _)) => format!("{mark} {label}"),
+        None => label,
     }
+}
+
+/// Marca y color del estado de la conversacion: rojo error, celeste te espera,
+/// amarillo corriendo, verde lista. `None` si en la pestana no hay agente.
+fn tab_state(snapshot: &ClientShellSnapshot, tab: &ClientShellTab) -> Option<(char, Color)> {
+    use crate::api::schema::AgentStatus;
+    let agents = snapshot
+        .agents
+        .iter()
+        .filter(|agent| agent.tab_id == tab.tab_id)
+        .collect::<Vec<_>>();
+    let any = |status: AgentStatus| agents.iter().any(|agent| agent.agent_status == status);
+    if agents.is_empty() {
+        None
+    } else if agents
+        .iter()
+        .any(|agent| agent.tokens.iter().any(|(name, _)| name == "fallo"))
+    {
+        Some(('✗', Color::Rgb(0xf3, 0x8b, 0xa8)))
+    } else if any(AgentStatus::Blocked) {
+        Some(('?', Color::Rgb(0x89, 0xdc, 0xeb)))
+    } else if any(AgentStatus::Working) {
+        Some(('●', Color::Rgb(0xf9, 0xe2, 0xaf)))
+    } else if any(AgentStatus::Done) || any(AgentStatus::Idle) {
+        Some(('✓', Color::Rgb(0xa6, 0xe3, 0xa1)))
+    } else {
+        None
+    }
+}
+
+/// Recorta los nombres mas largos para que todas las pestanas quepan a la vista.
+/// Si ni asi caben con un minimo legible, las deja como estan y queda el scroll.
+fn fit_tab_widths(widths: Vec<u16>, available: u16) -> Vec<u16> {
+    const MIN_READABLE: u16 = 10;
+    let separators = widths.len().saturating_sub(1) as u32;
+    let fits = |cap: u16| {
+        widths.iter().map(|w| u32::from((*w).min(cap))).sum::<u32>() + separators
+            <= u32::from(available)
+    };
+    let longest = widths.iter().copied().max().unwrap_or(0);
+    if fits(longest) || !fits(MIN_READABLE) {
+        return widths;
+    }
+    let cap = (MIN_READABLE..longest)
+        .rev()
+        .find(|cap| fits(*cap))
+        .unwrap_or(MIN_READABLE);
+    widths.into_iter().map(|w| w.min(cap)).collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::max_tab_scroll;
+    use super::{fit_tab_widths, max_tab_scroll};
+
+    #[test]
+    fn long_tab_names_shrink_so_every_tab_fits() {
+        assert_eq!(fit_tab_widths(vec![30, 8, 30], 40), vec![15, 8, 15]);
+        assert_eq!(fit_tab_widths(vec![6, 8], 40), vec![6, 8]);
+        assert_eq!(fit_tab_widths(vec![30, 30, 30, 30], 20), vec![30, 30, 30, 30]);
+    }
 
     #[test]
     fn trailing_scroll_limit_accounts_for_full_widths_and_separators() {
