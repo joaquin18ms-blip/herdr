@@ -1044,6 +1044,19 @@ impl App {
         let Some(tab_id) = self.public_tab_id(target_ws_idx, target_tab_idx) else {
             return encode_error(id, "tab_not_found", "target tab not found");
         };
+        // Si ya venia de otro lado, se queda el primer origen: es a donde vuelve.
+        let origin = self.pane_terminal_id(&params.source_pane_id).and_then(|terminal_id| {
+            let (ws_idx, pane_id) = self.parse_pane_id(&params.source_pane_id)?;
+            let workspace = &self.state.workspaces[ws_idx];
+            let tab_idx = workspace.find_tab_index_for_pane(pane_id)?;
+            Some((
+                terminal_id,
+                crate::terminal::DockOrigin {
+                    workspace: workspace.display_name(),
+                    tab: workspace.tabs[tab_idx].custom_name.clone(),
+                },
+            ))
+        });
         let split = match params.side {
             PaneDirection::Left | PaneDirection::Right => crate::api::schema::SplitDirection::Right,
             PaneDirection::Up | PaneDirection::Down => crate::api::schema::SplitDirection::Down,
@@ -1069,6 +1082,11 @@ impl App {
                 }) if move_result.changed => move_result.pane.pane_id,
                 _ => return response,
             };
+        if let Some((terminal_id, origin)) = origin {
+            if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+                terminal.dock_origin.get_or_insert(origin);
+            }
+        }
         if matches!(params.side, PaneDirection::Right | PaneDirection::Down) {
             return response;
         }
@@ -1080,6 +1098,81 @@ impl App {
                 side: params.side,
             },
         )
+    }
+
+    fn pane_terminal_id(&self, public_pane_id: &str) -> Option<crate::terminal::TerminalId> {
+        let (ws_idx, pane_id) = self.parse_pane_id(public_pane_id)?;
+        let workspace = &self.state.workspaces[ws_idx];
+        let tab_idx = workspace.find_tab_index_for_pane(pane_id)?;
+        workspace.tabs[tab_idx].terminal_id(pane_id).cloned()
+    }
+
+    /// Saca un panel de la division: vuelve a su agente de origen como pestana propia.
+    /// Sin origen conocido queda como pestana propia en el mismo agente. El foco no se
+    /// mueve, para seguir viendo lo que quedaba en pantalla.
+    pub(super) fn handle_pane_undock(&mut self, id: String, params: PaneTarget) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(tab_idx) = self.state.workspaces[ws_idx].find_tab_index_for_pane(pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(terminal_id) = self.pane_terminal_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let origin = self
+            .state
+            .terminals
+            .get(&terminal_id)
+            .and_then(|terminal| terminal.dock_origin.clone());
+        let alone = self.state.workspaces[ws_idx].tabs[tab_idx].panes.len() == 1;
+        let origin_ws = origin.as_ref().and_then(|origin| {
+            self.state
+                .workspaces
+                .iter()
+                .position(|workspace| workspace.display_name() == origin.workspace)
+        });
+        if alone && (origin.is_none() || origin_ws == Some(ws_idx)) {
+            if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+                terminal.dock_origin = None;
+            }
+            return encode_success(id, ResponseResult::Ok {});
+        }
+        let destination = match (origin, origin_ws) {
+            (Some(origin), Some(ws_idx)) => PaneMoveDestination::NewTab {
+                workspace_id: Some(self.public_workspace_id(ws_idx)),
+                label: origin.tab,
+            },
+            // Ese agente se cerro al quedarse sin conversaciones: se vuelve a crear.
+            (Some(origin), None) => PaneMoveDestination::NewWorkspace {
+                label: Some(origin.workspace),
+                tab_label: origin.tab,
+            },
+            (None, _) => PaneMoveDestination::NewTab {
+                workspace_id: None,
+                label: None,
+            },
+        };
+        let response = self.handle_pane_move(
+            id,
+            PaneMoveParams {
+                pane_id: params.pane_id,
+                destination,
+                focus: false,
+            },
+        );
+        if let Ok(crate::api::schema::SuccessResponse {
+            result: ResponseResult::PaneMove { move_result },
+            ..
+        }) = serde_json::from_str::<crate::api::schema::SuccessResponse>(&response)
+        {
+            if move_result.changed {
+                if let Some(terminal) = self.state.terminals.get_mut(&terminal_id) {
+                    terminal.dock_origin = None;
+                }
+            }
+        }
+        response
     }
 
     pub(super) fn handle_pane_move(&mut self, id: String, params: PaneMoveParams) -> String {

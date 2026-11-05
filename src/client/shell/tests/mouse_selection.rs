@@ -1386,3 +1386,86 @@ fn sidebar_agent_click_focuses_on_release_and_drag_docks_it_beside_a_pane() {
                 if params.source_pane_id == "pane_9" && params.target_pane_id == "pane_1")
     )));
 }
+
+#[test]
+fn pane_frame_drag_onto_agent_list_undocks_but_list_row_drag_does_not() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    let template = pane_surface.panes[0].clone();
+    let bordered = |pane_id: &str, x: u16| PaneSurfacePane {
+        pane_id: pane_id.into(),
+        rect: SurfaceRect {
+            x,
+            y: 0,
+            width: 40,
+            height: 19,
+        },
+        inner_rect: SurfaceRect {
+            x: x + 1,
+            y: 1,
+            width: 38,
+            height: 17,
+        },
+        ..template.clone()
+    };
+    pane_surface.panes = vec![bordered("pane_1", 0), bordered("pane_2", 40)];
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("two pane surface");
+    let left = state.hits.panes.iter().map(|hit| hit.rect.x).min().unwrap();
+    assert!(left > 0, "needs an agent list on the left");
+    let source = state.hits.panes[0].clone();
+    let mouse = |kind, column, row| {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind,
+            column,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        source.rect.x + 5,
+        source.rect.y,
+    )]);
+    state.handle_raw_events(vec![mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        left - 1,
+        5,
+    )]);
+    assert!(matches!(
+        state.chrome_drag,
+        Some(ClientChromeDrag::PaneDock {
+            over_undock: true,
+            ..
+        })
+    ));
+    let release = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        left - 1,
+        5,
+    )]);
+    assert!(release.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(&request.method, crate::api::schema::Method::PaneUndock(target)
+                if target.pane_id == source.pane_id)
+    )));
+
+    state.chrome_drag = Some(ClientChromeDrag::PaneDock {
+        source_pane_id: "pane_1".into(),
+        target: None,
+        can_undock: false,
+        over_undock: false,
+    });
+    let release = state.handle_raw_events(vec![mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        left - 1,
+        5,
+    )]);
+    assert!(!release.actions.iter().any(|action| matches!(
+        action,
+        ClientShellAction::Endpoint { request, .. }
+            if matches!(&request.method, crate::api::schema::Method::PaneUndock(_))
+    )));
+}

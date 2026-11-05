@@ -412,14 +412,27 @@ impl ClientShellState {
             }
             frame.replace_from_ratatui_buffer_preserving_effects(&composed, cursor);
         }
-        if let Some(ClientChromeDrag::PaneDock {
-            target: Some(target),
-            ..
-        }) = &self.chrome_drag
-        {
+        let dock_preview = match &self.chrome_drag {
+            Some(ClientChromeDrag::PaneDock {
+                over_undock: true, ..
+            }) => self.pane_undock_area().map(|area| (area, " sacar ")),
+            Some(ClientChromeDrag::PaneDock {
+                target: Some(target),
+                ..
+            }) => Some((
+                target.preview,
+                if target.side.is_some() {
+                    " soltar aquí "
+                } else {
+                    " intercambiar "
+                },
+            )),
+            _ => None,
+        };
+        if let Some((preview, label)) = dock_preview {
             let cursor = frame.cursor.clone();
             let mut composed = frame.to_ratatui_buffer()?;
-            let area = target.preview.intersection(composed.area);
+            let area = preview.intersection(composed.area);
             occlusion.cover(area);
             let palette = &self.config.palette;
             for y in area.top()..area.bottom() {
@@ -435,11 +448,6 @@ impl ClientShellState {
                     });
                 }
             }
-            let label = if target.side.is_some() {
-                " soltar aquí "
-            } else {
-                " intercambiar "
-            };
             let width = render::display_width(label).min(area.width);
             let x = area.x + area.width.saturating_sub(width) / 2;
             let y = area.y + area.height / 2;

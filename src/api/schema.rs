@@ -145,6 +145,8 @@ pub enum Method {
     PaneSwap(PaneSwapParams),
     #[serde(rename = "pane.dock")]
     PaneDock(PaneDockParams),
+    #[serde(rename = "pane.undock")]
+    PaneUndock(PaneTarget),
     #[serde(rename = "pane.move")]
     PaneMove(PaneMoveParams),
     #[serde(rename = "pane.zoom")]

@@ -319,3 +319,51 @@ async fn public_pane_dock_pulls_pane_from_another_tab_onto_requested_side() {
     assert!(moved_rect.x < target_rect.x);
     assert_eq!(moved_rect.y, target_rect.y);
 }
+
+#[tokio::test]
+async fn public_pane_undock_returns_docked_pane_to_a_tab_of_its_own() {
+    let mut server = pane_move_server();
+    server.app.state.workspaces[0].tabs[1].custom_name = Some("conversa".into());
+    let target = server.app.state.workspaces[0].tabs[0].root_pane;
+    let source = server.app.state.workspaces[0].tabs[1].root_pane;
+    let source_id = server.app.public_pane_id(0, source).unwrap();
+    let target_id = server.app.public_pane_id(0, target).unwrap();
+    let mut call = |id: &str, method| {
+        let (respond_to, response_rx) = std::sync::mpsc::channel();
+        server.handle_api_request_with_shutdown_check(crate::api::ApiRequestMessage {
+            request: crate::api::schema::Request {
+                id: id.into(),
+                method,
+            },
+            respond_to,
+            response_write_complete: None,
+        });
+        let response = response_rx.recv().expect("response");
+        assert!(
+            serde_json::from_str::<SuccessResponse>(&response).is_ok(),
+            "{response}"
+        );
+    };
+    call(
+        "dock",
+        crate::api::schema::Method::PaneDock(crate::api::schema::PaneDockParams {
+            source_pane_id: source_id.clone(),
+            target_pane_id: target_id,
+            side: crate::api::schema::PaneDirection::Right,
+        }),
+    );
+    call(
+        "undock",
+        crate::api::schema::Method::PaneUndock(crate::api::schema::PaneTarget {
+            pane_id: source_id,
+        }),
+    );
+    let workspace = &server.app.state.workspaces[0];
+    assert_eq!(workspace.tabs.len(), 2);
+    assert_eq!(workspace.tabs[0].panes.len(), 1);
+    assert_eq!(workspace.tabs[1].custom_name.as_deref(), Some("conversa"));
+    let terminal_id = workspace.tabs[1]
+        .terminal_id(workspace.tabs[1].root_pane)
+        .unwrap();
+    assert_eq!(server.app.state.terminals[terminal_id].dock_origin, None);
+}

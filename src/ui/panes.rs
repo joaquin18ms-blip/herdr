@@ -22,6 +22,50 @@ pub(crate) fn pane_is_scrolled_back(rt: &TerminalRuntime) -> bool {
         .is_some_and(|metrics| metrics.offset_from_bottom > 0)
 }
 
+/// Lo que dice arriba de cada cuadro: "agente · conversacion". El titulo de la
+/// conversacion lo mantiene radar en los tokens `title_*`, con una marca de estado
+/// delante que aqui sobra.
+fn pane_agent_conversation_label(
+    ws: &crate::workspace::Workspace,
+    tab_name: Option<&str>,
+    terminal: &crate::terminal::TerminalState,
+    show_agent_labels: bool,
+) -> String {
+    const TITLE_TOKENS: [&str; 7] = [
+        "title_working",
+        "title_blocked",
+        "title_done",
+        "title_idle_fresh",
+        "title_idle",
+        "title_idle_stale",
+        "title_unknown",
+    ];
+    let tokens = terminal.metadata_tokens.values();
+    let token_title = TITLE_TOKENS
+        .iter()
+        .find_map(|key| tokens.get(*key))
+        .map(|title| {
+            let title = title.trim();
+            match title.split_once(char::is_whitespace) {
+                Some((mark, rest)) if !mark.chars().any(char::is_alphanumeric) => {
+                    rest.trim().to_string()
+                }
+                _ => title.to_string(),
+            }
+        })
+        .filter(|title| !title.is_empty());
+    let origin = terminal.dock_origin.as_ref();
+    let agent = origin.map_or_else(|| ws.display_name(), |origin| origin.workspace.clone());
+    let conversation = token_title
+        .or_else(|| terminal.border_label(show_agent_labels))
+        .or_else(|| origin.and_then(|origin| origin.tab.clone()))
+        .or_else(|| tab_name.map(str::to_string));
+    match conversation {
+        Some(conversation) => format!("{agent} · {conversation}"),
+        None => agent,
+    }
+}
+
 fn pane_border_title(label: &str, pane_width: u16, _focused: bool) -> Option<String> {
     let label = label.trim();
     if label.is_empty() || pane_width <= 4 {
@@ -744,7 +788,17 @@ fn render_pane_border_titles(
         let Some(title) = ws
             .pane_state(info.id)
             .and_then(|pane| app.terminals.get(&pane.attached_terminal_id))
-            .and_then(|terminal| terminal.border_label(app.show_agent_labels_on_pane_borders))
+            .map(|terminal| {
+                let tab_name = ws
+                    .find_tab_index_for_pane(info.id)
+                    .and_then(|tab_idx| ws.tabs[tab_idx].custom_name.as_deref());
+                pane_agent_conversation_label(
+                    ws,
+                    tab_name,
+                    terminal,
+                    app.show_agent_labels_on_pane_borders,
+                )
+            })
             .and_then(|label| pane_border_title(&label, info.rect.width, info.is_focused))
         else {
             continue;
@@ -1020,7 +1074,7 @@ mod tests {
     fn pane_border_renderer_places_adjacent_cjk_by_display_width() {
         let mut app = AppState::test_new();
         app.view.terminal_area = Rect::new(0, 0, 12, 3);
-        let ws = Workspace::test_new("test");
+        let ws = Workspace::test_new("1 模块组织（已定）");
         let pane_id = ws.tabs[0].root_pane;
         app.view.pane_infos = vec![PaneInfo {
             id: pane_id,
@@ -1032,8 +1086,7 @@ mod tests {
         }];
 
         let terminal_id = ws.tabs[0].panes[&pane_id].attached_terminal_id.clone();
-        let mut terminal_state = TerminalState::new(terminal_id.clone(), "/tmp".into());
-        terminal_state.set_manual_label("1 模块组织（已定）".into());
+        let terminal_state = TerminalState::new(terminal_id.clone(), "/tmp".into());
         app.terminals.insert(terminal_id, terminal_state);
 
         let mut terminal =
@@ -1046,6 +1099,22 @@ mod tests {
         assert_eq!(buffer[(4, 0)].symbol(), "模");
         assert_eq!(buffer[(5, 0)].symbol(), " ");
         assert_eq!(buffer[(6, 0)].symbol(), "块");
+    }
+
+    #[test]
+    fn pane_title_says_agent_and_conversation_without_state_mark() {
+        let ws = Workspace::test_new("pacha");
+        let mut terminal = TerminalState::new(ws.tabs[0].panes[&ws.tabs[0].root_pane].attached_terminal_id.clone(), "/tmp".into());
+        assert_eq!(pane_agent_conversation_label(&ws, None, &terminal, false), "pacha");
+        assert_eq!(pane_agent_conversation_label(&ws, Some("cobros"), &terminal, false), "pacha · cobros");
+        terminal.metadata_tokens.patch(
+            [("title_working".to_string(), Some("⣟ revisar sitio".to_string()))].into(),
+            None,
+            std::time::Instant::now(),
+        );
+        assert_eq!(pane_agent_conversation_label(&ws, Some("cobros"), &terminal, false), "pacha · revisar sitio");
+        terminal.dock_origin = Some(crate::terminal::DockOrigin { workspace: "bluebell".into(), tab: None });
+        assert_eq!(pane_agent_conversation_label(&ws, None, &terminal, false), "bluebell · revisar sitio");
     }
 
     #[test]

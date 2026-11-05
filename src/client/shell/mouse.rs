@@ -452,6 +452,19 @@ impl ClientShellState {
 
     /// Drop target for a dragged pane: the edge of the hovered pane nearest
     /// the pointer docks beside it, the middle third swaps the two panes.
+    /// Lo que queda a la izquierda de los cuadros: el panel de agentes.
+    pub(super) fn pane_undock_area(&self) -> Option<Rect> {
+        let left = self.hits.panes.iter().map(|hit| hit.rect.x).min()?;
+        let top = self.hits.panes.iter().map(|hit| hit.rect.y).min()?;
+        let bottom = self.hits.panes.iter().map(|hit| hit.rect.bottom()).max()?;
+        (left > 0).then(|| Rect::new(0, top, left, bottom - top))
+    }
+
+    fn over_pane_undock_area(&self, point: (u16, u16)) -> bool {
+        self.pane_undock_area()
+            .is_some_and(|area| super::contains(area, point))
+    }
+
     fn pane_dock_target_at(
         &self,
         source_pane_id: &str,
@@ -1271,6 +1284,8 @@ impl ClientShellState {
                             self.chrome_drag = Some(ClientChromeDrag::PaneDock {
                                 source_pane_id,
                                 target: Some(target),
+                                can_undock: false,
+                                over_undock: false,
                             });
                             outcome.repaint = true;
                             return;
@@ -1288,11 +1303,16 @@ impl ClientShellState {
                 }
                 Some(ClientChromeDrag::PaneDock { source_pane_id, .. }) => {
                     let target = self.pane_dock_target_at(&source_pane_id.clone(), point);
+                    let over = self.over_pane_undock_area(point);
                     if let Some(ClientChromeDrag::PaneDock {
-                        target: current, ..
+                        target: current,
+                        can_undock,
+                        over_undock,
+                        ..
                     }) = self.chrome_drag.as_mut()
                     {
                         *current = target;
+                        *over_undock = *can_undock && over;
                     }
                     outcome.repaint = true;
                     return;
@@ -1337,11 +1357,14 @@ impl ClientShellState {
                     .max(mouse.row.abs_diff(press.start_row));
                 if delta >= 1 {
                     let source_pane_id = press.pane_id.clone();
+                    let can_undock = !press.focus_on_release;
                     let target = self.pane_dock_target_at(&source_pane_id, point);
                     self.pane_dock_press = None;
                     self.chrome_drag = Some(ClientChromeDrag::PaneDock {
                         source_pane_id,
                         target,
+                        can_undock,
+                        over_undock: can_undock && self.over_pane_undock_area(point),
                     });
                     outcome.repaint = true;
                 }
@@ -1371,8 +1394,23 @@ impl ClientShellState {
                 self.tab_press = None;
                 self.pane_dock_press = None;
                 match drag {
-                    ClientChromeDrag::PaneDock { source_pane_id, .. } => {
-                        if let Some(target) = self.pane_dock_target_at(&source_pane_id, point) {
+                    ClientChromeDrag::PaneDock {
+                        source_pane_id,
+                        can_undock,
+                        ..
+                    } => {
+                        if can_undock && self.over_pane_undock_area(point) {
+                            self.push_endpoint_method(
+                                crate::api::schema::Method::PaneUndock(
+                                    crate::api::schema::PaneTarget {
+                                        pane_id: source_pane_id,
+                                    },
+                                ),
+                                outcome,
+                            );
+                        } else if let Some(target) =
+                            self.pane_dock_target_at(&source_pane_id, point)
+                        {
                             let method = match target.side {
                                 Some(side) => crate::api::schema::Method::PaneDock(
                                     crate::api::schema::PaneDockParams {

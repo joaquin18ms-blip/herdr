@@ -111,6 +111,8 @@ pub struct PaneSnapshot {
     pub agent_resume: Option<PaneAgentResumeSnapshot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub launch_argv: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dock_origin: Option<crate::terminal::DockOrigin>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -388,6 +390,7 @@ fn capture_tab(
                 agent_session,
                 agent_resume,
                 launch_argv,
+                dock_origin: terminal.and_then(|terminal| terminal.dock_origin.clone()),
             },
         );
     }
@@ -700,6 +703,7 @@ mod tests {
         panes.insert(
             0,
             PaneSnapshot {
+                dock_origin: None,
                 cwd: PathBuf::from("/home/can/Projects/herdr"),
                 label: None,
                 agent_name: None,
@@ -712,6 +716,7 @@ mod tests {
         panes.insert(
             1,
             PaneSnapshot {
+                dock_origin: None,
                 cwd: PathBuf::from("/home/can/Projects/website"),
                 label: Some("website".into()),
                 agent_name: None,
@@ -1398,6 +1403,7 @@ mod tests {
         panes.insert(
             0,
             PaneSnapshot {
+                dock_origin: None,
                 cwd: PathBuf::from("/tmp/this-directory-does-not-exist-for-herdr-test"),
                 label: None,
                 agent_name: None,
@@ -1410,6 +1416,7 @@ mod tests {
         panes.insert(
             1,
             PaneSnapshot {
+                dock_origin: None,
                 cwd: std::env::var("HOME")
                     .map(PathBuf::from)
                     .unwrap_or_else(|_| PathBuf::from("/tmp")),

@@ -228,6 +228,10 @@ pub(super) enum ClientChromeDrag {
     PaneDock {
         source_pane_id: String,
         target: Option<PaneDockTarget>,
+        /// Se arrastro desde su cuadro (no desde la lista), asi que soltarlo en la
+        /// lista de la izquierda lo saca de la division.
+        can_undock: bool,
+        over_undock: bool,
     },
     PaneSplit {
         hit: PaneSplitHit,

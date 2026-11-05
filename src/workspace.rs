@@ -1019,7 +1019,6 @@ impl Workspace {
             .or_else(|| Some(self.identity_cwd.clone()))
     }
 
-    #[cfg(test)]
     pub fn display_name(&self) -> String {
         if let Some(name) = &self.custom_name {
             return name.clone();

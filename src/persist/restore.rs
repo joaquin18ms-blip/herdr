@@ -450,6 +450,7 @@ fn unavailable_restored_terminal(
     terminal.restore_error = Some(reason);
     if let Some(pane) = pane {
         terminal.manual_label = pane.label.clone();
+        terminal.dock_origin = pane.dock_origin.clone();
         terminal.launch_argv = pane.launch_argv.clone();
         if let Some(session) = restored_terminal_agent_session(pane.agent_session.as_ref(), false) {
             terminal.set_persisted_agent_session(session);
@@ -533,6 +534,7 @@ fn restore_tab(
         }
 
         let saved_label = saved_pane.and_then(|p| p.label.clone());
+        let saved_dock_origin = saved_pane.and_then(|p| p.dock_origin.clone());
         let saved_agent_name = saved_pane.and_then(|p| p.agent_name.clone());
         let saved_managed_agent = saved_pane
             .and_then(|pane| pane.managed_agent_kind.as_deref())
@@ -593,6 +595,7 @@ fn restore_tab(
             let terminal_id = TerminalId::alloc();
             let mut terminal = TerminalState::new(terminal_id.clone(), cwd.clone())
                 .with_pending_agent_resume_plan(plan);
+            terminal.dock_origin = saved_dock_origin;
             if let Some(label) = saved_label {
                 terminal.set_manual_label(label);
             }
@@ -693,6 +696,7 @@ fn restore_tab(
                         terminal = terminal.with_launch_argv(argv).with_respawn_shell_on_exit();
                     }
                 }
+                terminal.dock_origin = saved_dock_origin;
                 if let Some(label) = saved_label {
                     terminal.set_manual_label(label);
                 }
@@ -1542,6 +1546,7 @@ mod tests {
                     panes: HashMap::from([(
                         0,
                         super::super::snapshot::PaneSnapshot {
+                            dock_origin: None,
                             cwd,
                             label: Some("reviewer".into()),
                             agent_name: Some("reviewer".into()),
@@ -1629,6 +1634,7 @@ mod tests {
                         (
                             10,
                             super::super::snapshot::PaneSnapshot {
+                                dock_origin: None,
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -1641,6 +1647,7 @@ mod tests {
                         (
                             20,
                             super::super::snapshot::PaneSnapshot {
+                                dock_origin: None,
                                 cwd: cwd.clone(),
                                 label: None,
                                 agent_name: None,
@@ -1695,6 +1702,7 @@ mod tests {
             (
                 id.parse::<u32>().unwrap(),
                 super::super::snapshot::PaneSnapshot {
+                    dock_origin: None,
                     cwd: cwd.clone(),
                     label: None,
                     agent_name: None,
@@ -1706,6 +1714,7 @@ mod tests {
             )
         };
         let final_pane = super::super::snapshot::PaneSnapshot {
+                    dock_origin: None,
             cwd: cwd.clone(),
             label: Some("planner".into()),
             agent_name: Some("planner".into()),
@@ -1858,6 +1867,7 @@ mod tests {
                     panes: HashMap::from([(
                         0,
                         super::super::snapshot::PaneSnapshot {
+                            dock_origin: None,
                             cwd,
                             label: None,
                             agent_name: None,
@@ -2169,6 +2179,7 @@ mod tests {
         panes.insert(
             0,
             super::super::snapshot::PaneSnapshot {
+                dock_origin: None,
                 cwd: cwd.clone(),
                 label: None,
                 agent_name: None,

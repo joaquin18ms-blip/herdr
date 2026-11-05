@@ -418,7 +418,7 @@ fn tab_state(snapshot: &ClientShellSnapshot, tab: &ClientShellTab) -> Option<(ch
         Some(('✗', Color::Rgb(0xf3, 0x8b, 0xa8)))
     } else if any(AgentStatus::Blocked) || has_token("title_blocked") {
         Some(('?', Color::Rgb(0x89, 0xdc, 0xeb)))
-    } else if any(AgentStatus::Working) {
+    } else if any(AgentStatus::Working) || has_token("sigue") {
         Some(('●', Color::Rgb(0xf9, 0xe2, 0xaf)))
     } else if any(AgentStatus::Done) || has_token("title_done") {
         Some(('✓', Color::Rgb(0xa6, 0xe3, 0xa1)))

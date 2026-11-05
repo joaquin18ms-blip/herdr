@@ -102,6 +102,13 @@ pub(crate) struct TerminalTitleChange {
     pub(crate) stripped_changed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DockOrigin {
+    pub workspace: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TerminalStateMutation {
     pub effective_state_change: Option<EffectiveStateChange>,
@@ -141,6 +148,8 @@ pub struct TerminalState {
     reported_resume_revision: u64,
     pub terminal_title: Option<String>,
     pub manual_label: Option<String>,
+    /// De donde vino al arrastrarlo a otra pestana, para poder devolverlo.
+    pub dock_origin: Option<DockOrigin>,
     pub agent_name: Option<String>,
     agent_name_owner: Option<AgentNameOwner>,
     managed_agent: Option<ManagedAgent>,
@@ -181,6 +190,7 @@ impl TerminalState {
             reported_resume_revision: 0,
             terminal_title: None,
             manual_label: None,
+            dock_origin: None,
             agent_name: None,
             agent_name_owner: None,
             managed_agent: None,

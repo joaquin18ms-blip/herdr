@@ -35,6 +35,7 @@ const CLIENT_SHELL_METHODS: &[&str] = &[
     "pane.selection.read",
     "pane.split",
     "pane.swap",
+    "pane.undock",
     "pane.zoom",
     "product_announcement.dismiss",
     "release_notes.dismiss",
@@ -439,5 +440,6 @@ mod tests {
     fn client_shell_can_request_pane_dock() {
         // El arrastre del cliente lo manda por el endpoint; sin esto, soltar en un lado se rechaza.
         assert!(supports_client_shell_method_name("pane.dock"));
+        assert!(supports_client_shell_method_name("pane.undock"));
     }
 }
