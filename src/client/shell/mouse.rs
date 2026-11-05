@@ -450,8 +450,6 @@ impl ClientShellState {
         ((pointer + grab_offset - origin) as f32 / f32::from(length.max(1))).clamp(0.1, 0.9)
     }
 
-    /// Drop target for a dragged pane: the edge of the hovered pane nearest
-    /// the pointer docks beside it, the middle third swaps the two panes.
     /// Lo que queda a la izquierda de los cuadros: el panel de agentes.
     pub(super) fn pane_undock_area(&self) -> Option<Rect> {
         let left = self.hits.panes.iter().map(|hit| hit.rect.x).min()?;
@@ -465,7 +463,12 @@ impl ClientShellState {
             .is_some_and(|area| super::contains(area, point))
     }
 
-    fn pane_dock_target_at(
+    /// Drop target for a dragged pane, on a 3x3 grid over the hovered pane.
+    /// Edges dock on that side. Corners dock toward the corner along whichever
+    /// axis keeps the panes squarest, so filling the four corners of a screen
+    /// gives a 2x2 grid in any order. The middle swaps panes of the same tab;
+    /// a pane from elsewhere can't swap, so it docks like a corner.
+    pub(super) fn pane_dock_target_at(
         &self,
         source_pane_id: &str,
         point: (u16, u16),
@@ -481,45 +484,94 @@ impl ClientShellState {
         let rect = hit.rect;
         let fx = f32::from(point.0.saturating_sub(rect.x)) / f32::from(rect.width.max(1));
         let fy = f32::from(point.1.saturating_sub(rect.y)) / f32::from(rect.height.max(1));
-        let middle = (1.0 / 3.0..2.0 / 3.0).contains(&fx) && (1.0 / 3.0..2.0 / 3.0).contains(&fy);
+        let middle_third = 1.0 / 3.0..2.0 / 3.0;
+        let (middle_x, middle_y) = (middle_third.contains(&fx), middle_third.contains(&fy));
+        let toward_x = if fx < 0.5 {
+            crate::api::schema::PaneDirection::Left
+        } else {
+            crate::api::schema::PaneDirection::Right
+        };
+        let toward_y = if fy < 0.5 {
+            crate::api::schema::PaneDirection::Up
+        } else {
+            crate::api::schema::PaneDirection::Down
+        };
+        // Terminal cells are about twice as tall as wide.
+        let squarest = if rect.width >= rect.height.saturating_mul(2) {
+            toward_x
+        } else {
+            toward_y
+        };
+        let side = match (middle_x, middle_y) {
+            (true, true) if self.pane_is_from_other_tab(source_pane_id, &hit.pane_id) => {
+                Some(squarest)
+            }
+            (true, true) => None,
+            (true, false) => Some(toward_y),
+            (false, true) => Some(toward_x),
+            (false, false) => Some(squarest),
+        };
         let half_w = rect.width / 2;
         let half_h = rect.height / 2;
-        let (side, preview) = if middle {
-            (None, rect)
-        } else {
-            let edges = [
-                (fx, crate::api::schema::PaneDirection::Left),
-                (1.0 - fx, crate::api::schema::PaneDirection::Right),
-                (fy, crate::api::schema::PaneDirection::Up),
-                (1.0 - fy, crate::api::schema::PaneDirection::Down),
-            ];
-            let (_, side) = edges.into_iter().min_by(|a, b| a.0.total_cmp(&b.0))?;
-            let preview = match side {
-                crate::api::schema::PaneDirection::Left => Rect {
-                    width: half_w,
-                    ..rect
-                },
-                crate::api::schema::PaneDirection::Right => Rect {
-                    x: rect.x + half_w,
-                    width: rect.width - half_w,
-                    ..rect
-                },
-                crate::api::schema::PaneDirection::Up => Rect {
-                    height: half_h,
-                    ..rect
-                },
-                crate::api::schema::PaneDirection::Down => Rect {
-                    y: rect.y + half_h,
-                    height: rect.height - half_h,
-                    ..rect
-                },
-            };
-            (Some(side), preview)
+        let preview = match side {
+            None => rect,
+            Some(crate::api::schema::PaneDirection::Left) => Rect {
+                width: half_w,
+                ..rect
+            },
+            Some(crate::api::schema::PaneDirection::Right) => Rect {
+                x: rect.x + half_w,
+                width: rect.width - half_w,
+                ..rect
+            },
+            Some(crate::api::schema::PaneDirection::Up) => Rect {
+                height: half_h,
+                ..rect
+            },
+            Some(crate::api::schema::PaneDirection::Down) => Rect {
+                y: rect.y + half_h,
+                height: rect.height - half_h,
+                ..rect
+            },
         };
         Some(PaneDockTarget {
             pane_id: hit.pane_id.clone(),
             side,
             preview,
+        })
+    }
+
+    fn pane_is_from_other_tab(&self, source_pane_id: &str, target_pane_id: &str) -> bool {
+        let Some(snapshot) = self.snapshot.as_deref() else {
+            return false;
+        };
+        let tab_of = |pane_id: &str| {
+            snapshot
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == pane_id)
+                .map(|pane| pane.tab_id.as_str())
+        };
+        let target_tab = tab_of(target_pane_id);
+        target_tab.is_some() && tab_of(source_pane_id) != target_tab
+    }
+
+    /// A tab dragged off the tab row over another pane becomes a pane dock.
+    fn tab_dock_drag_at(&self, tab_id: &str, point: (u16, u16)) -> Option<ClientChromeDrag> {
+        let source_pane_id = self
+            .snapshot
+            .as_deref()?
+            .panes
+            .iter()
+            .find(|pane| pane.tab_id == tab_id)?
+            .pane_id
+            .clone();
+        let target = self.pane_dock_target_at(&source_pane_id, point)?;
+        Some(ClientChromeDrag::PaneDock {
+            source_pane_id,
+            target: Some(target),
+            can_undock: false,
+            over_undock: false,
         })
     }
 
@@ -1267,26 +1319,9 @@ impl ClientShellState {
                 }
                 Some(ClientChromeDrag::Tab { tab_id, .. }) => {
                     let insert_index = self.tab_drop_index_at(point);
-                    let tab_pane_id = insert_index
-                        .is_none()
-                        .then(|| {
-                            self.snapshot.as_deref().and_then(|snapshot| {
-                                snapshot
-                                    .panes
-                                    .iter()
-                                    .find(|pane| &pane.tab_id == tab_id)
-                                    .map(|pane| pane.pane_id.clone())
-                            })
-                        })
-                        .flatten();
-                    if let Some(source_pane_id) = tab_pane_id {
-                        if let Some(target) = self.pane_dock_target_at(&source_pane_id, point) {
-                            self.chrome_drag = Some(ClientChromeDrag::PaneDock {
-                                source_pane_id,
-                                target: Some(target),
-                                can_undock: false,
-                                over_undock: false,
-                            });
+                    if insert_index.is_none() {
+                        if let Some(dock) = self.tab_dock_drag_at(&tab_id.clone(), point) {
+                            self.chrome_drag = Some(dock);
                             outcome.repaint = true;
                             return;
                         }
@@ -1376,12 +1411,21 @@ impl ClientShellState {
                     .abs_diff(press.start_column)
                     .max(mouse.row.abs_diff(press.start_row));
                 if delta >= 1 {
-                    if let Some(insert_index) = self.tab_drop_index_at(point) {
-                        self.chrome_drag = Some(ClientChromeDrag::Tab {
-                            tab_id: press.tab_id.clone(),
-                            workspace_id: press.workspace_id.clone(),
-                            insert_index: Some(insert_index),
-                        });
+                    let insert_index = self.tab_drop_index_at(point);
+                    // Straight down off the tab row is a drag too. One row of
+                    // slack so a sloppy click still selects the tab.
+                    if insert_index.is_some() || mouse.row.abs_diff(press.start_row) >= 2 {
+                        let (tab_id, workspace_id) =
+                            (press.tab_id.clone(), press.workspace_id.clone());
+                        let dock = insert_index
+                            .is_none()
+                            .then(|| self.tab_dock_drag_at(&tab_id, point))
+                            .flatten();
+                        self.chrome_drag = Some(dock.unwrap_or(ClientChromeDrag::Tab {
+                            tab_id,
+                            workspace_id,
+                            insert_index,
+                        }));
                         outcome.repaint = true;
                     }
                 }

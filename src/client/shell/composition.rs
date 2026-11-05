@@ -415,16 +415,16 @@ impl ClientShellState {
         let dock_preview = match &self.chrome_drag {
             Some(ClientChromeDrag::PaneDock {
                 over_undock: true, ..
-            }) => self.pane_undock_area().map(|area| (area, " sacar ")),
+            }) => self.pane_undock_area().map(|area| (area, " undock ")),
             Some(ClientChromeDrag::PaneDock {
                 target: Some(target),
                 ..
             }) => Some((
                 target.preview,
                 if target.side.is_some() {
-                    " soltar aquí "
+                    " drop here "
                 } else {
-                    " intercambiar "
+                    " swap "
                 },
             )),
             _ => None,

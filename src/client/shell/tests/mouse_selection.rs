@@ -1334,6 +1334,168 @@ fn pane_border_drag_docks_beside_hovered_pane_or_swaps_in_middle() {
     )));
 }
 
+/// Two tabs: tab_1 is on screen, full size unless `pane_1` gets a surface rect.
+fn state_with_background_tab(width: u16, height: u16) -> ClientShellState {
+    let mut projected = snapshot();
+    let mut tab = projected.tabs[0].clone();
+    tab.tab_id = "tab_2".into();
+    tab.number = 2;
+    tab.label = "2".into();
+    tab.focused = false;
+    projected.tabs.push(tab);
+    let mut pane = projected.panes[0].clone();
+    pane.pane_id = "pane_2".into();
+    pane.tab_id = "tab_2".into();
+    pane.focused = false;
+    projected.panes.push(pane);
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    let mut pane_surface = surface();
+    let template = pane_surface.panes[0].clone();
+    pane_surface.panes = vec![PaneSurfacePane {
+        pane_id: "pane_1".into(),
+        rect: SurfaceRect {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        },
+        inner_rect: SurfaceRect {
+            x: 1,
+            y: 1,
+            width: width - 2,
+            height: height - 2,
+        },
+        ..template
+    }];
+    state.set_pane_surface(pane_surface);
+    state.compose(width + 26, height + 1).expect("tab frame");
+    state
+}
+
+fn raw_mouse(kind: MouseEventKind, column: u16, row: u16) -> RawInputEvent {
+    RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind,
+        column,
+        row,
+        modifiers: KeyModifiers::empty(),
+    })
+}
+
+fn dropped_dock_side(
+    release: &crate::client::shell::ClientShellInput,
+    source: &str,
+    target: &str,
+) -> Option<crate::api::schema::PaneDirection> {
+    release.actions.iter().find_map(|action| match action {
+        ClientShellAction::Endpoint { request, .. } => match &request.method {
+            crate::api::schema::Method::PaneDock(params)
+                if params.source_pane_id == source && params.target_pane_id == target =>
+            {
+                Some(params.side)
+            }
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+#[test]
+fn tab_dragged_straight_down_onto_a_pane_docks_in_one_motion() {
+    let mut state = state_with_background_tab(80, 19);
+    let tab = state.hits.tabs[1].0;
+    let pane = state.hits.panes[0].rect;
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        tab.x + 1,
+        tab.y,
+    )]);
+    let edge = (pane.right() - 2, pane.y + pane.height / 2);
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        edge.0,
+        edge.1,
+    )]);
+    assert!(matches!(
+        &state.chrome_drag,
+        Some(ClientChromeDrag::PaneDock { source_pane_id, .. }) if source_pane_id == "pane_2"
+    ));
+    let release = state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        edge.0,
+        edge.1,
+    )]);
+    assert_eq!(
+        dropped_dock_side(&release, "pane_2", "pane_1"),
+        Some(crate::api::schema::PaneDirection::Right)
+    );
+}
+
+#[test]
+fn tab_nudged_one_row_off_the_tab_row_still_clicks() {
+    let mut state = state_with_background_tab(80, 19);
+    let tab = state.hits.tabs[1].0;
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        tab.x + 1,
+        tab.y,
+    )]);
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        tab.x + 1,
+        tab.y + 1,
+    )]);
+    assert!(state.chrome_drag.is_none());
+}
+
+#[test]
+fn dropping_a_tab_in_the_middle_of_a_pane_docks_because_tabs_cannot_swap() {
+    let mut state = state_with_background_tab(80, 19);
+    let tab = state.hits.tabs[1].0;
+    let pane = state.hits.panes[0].rect;
+    let middle = (pane.x + pane.width / 2 + 1, pane.y + pane.height / 2);
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        tab.x + 1,
+        tab.y,
+    )]);
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        middle.0,
+        middle.1,
+    )]);
+    let release = state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        middle.0,
+        middle.1,
+    )]);
+    assert_eq!(
+        dropped_dock_side(&release, "pane_2", "pane_1"),
+        Some(crate::api::schema::PaneDirection::Right)
+    );
+}
+
+#[test]
+fn pane_corners_split_along_the_axis_that_keeps_panes_square() {
+    use crate::api::schema::PaneDirection::{Down, Left, Right, Up};
+    // Wide pane: a corner splits it into columns. Narrow pane: into rows. Two
+    // rounds of corner drops on one screen therefore end in a 2x2 grid.
+    for (width, top_left, bottom_right) in [(80, Left, Right), (30, Up, Down)] {
+        let state = state_with_background_tab(width, 19);
+        let pane = state.hits.panes[0].rect;
+        let side = |point| {
+            state
+                .pane_dock_target_at("pane_2", point)
+                .and_then(|target| target.side)
+        };
+        assert_eq!(side((pane.x + 1, pane.y + 1)), Some(top_left));
+        assert_eq!(
+            side((pane.right() - 2, pane.bottom() - 2)),
+            Some(bottom_right)
+        );
+    }
+}
+
 #[test]
 fn sidebar_agent_click_focuses_on_release_and_drag_docks_it_beside_a_pane() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
