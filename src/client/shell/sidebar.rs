@@ -1,3 +1,4 @@
+use super::super::spaces::SpaceAction;
 use super::*;
 use ratatui::{
     text::Line,
@@ -226,7 +227,13 @@ pub(crate) fn render_sidebar(
             .add_modifier(Modifier::BOLD),
     );
 
-    let entries = workspace_entries(snapshot, state.collapsed_groups);
+    let mut entries = workspace_entries(snapshot, state.collapsed_groups);
+    super::super::spaces::retain_visible(&mut entries, snapshot, state.known_spaces);
+    let space_rows = if state.show_all_spaces {
+        state.known_spaces.rows(snapshot)
+    } else {
+        Vec::new()
+    };
     let body = Rect::new(
         workspace_area.x,
         workspace_area.y.saturating_add(WORKSPACE_HEADER_ROWS),
@@ -255,6 +262,7 @@ pub(crate) fn render_sidebar(
                 })
                 .unwrap_or(1)
         })
+        .chain(space_rows.iter().map(|_| 1))
         .collect::<Vec<_>>();
     let gaps = entries
         .iter()
@@ -264,6 +272,7 @@ pub(crate) fn render_sidebar(
                 .get(index + 1)
                 .map_or(0, |next| u16::from(!next.indented) * config.spaces.row_gap)
         })
+        .chain(space_rows.iter().map(|_| 0))
         .collect::<Vec<_>>();
     let mut metrics = super::scroll::list_scroll_metrics(
         &row_heights,
@@ -299,6 +308,7 @@ pub(crate) fn render_sidebar(
     let show_scrollbar = metrics.max_offset_from_bottom > 0 && body.width > 1;
     let content_width = body.width.saturating_sub(u16::from(show_scrollbar));
     let mut y = body.y;
+    let mut list_overflowed = false;
     for (entry_position, entry) in entries.iter().enumerate().skip(*state.workspace_scroll) {
         let Some(workspace) = snapshot.workspaces.get(entry.index) else {
             continue;
@@ -307,6 +317,7 @@ pub(crate) fn render_sidebar(
         let rows = workspace_rows(workspace, status, entry.indented, &config.spaces);
         let row_height = (rows.len().max(1).min(u16::MAX as usize) as u16).min(body.height);
         if y.saturating_add(row_height) > body.bottom() {
+            list_overflowed = true;
             break;
         }
         let rect = Rect::new(body.x, y, content_width, row_height);
@@ -342,6 +353,21 @@ pub(crate) fn render_sidebar(
             state.collapsed_groups,
             palette,
         );
+        if state.show_all_spaces && group_toggle.is_none() {
+            let hidden = state.known_spaces.is_hidden(&workspace.workspace_id);
+            let id = workspace.workspace_id.clone();
+            hits.space_actions.push(render_space_button(
+                buffer,
+                rect,
+                if hidden { "show" } else { "hide" },
+                if hidden {
+                    SpaceAction::Show(id)
+                } else {
+                    SpaceAction::Hide(id)
+                },
+                palette,
+            ));
+        }
         hits.workspaces.push(WorkspaceHit {
             rect,
             endpoint_id: ClientEndpointId::Local,
@@ -353,6 +379,34 @@ pub(crate) fn render_sidebar(
             .get(entry_position + 1)
             .map_or(0, |next| u16::from(!next.indented) * config.spaces.row_gap);
         y = y.saturating_add(row_height + gap);
+    }
+
+    if !list_overflowed {
+        for (label, action) in space_rows
+            .into_iter()
+            .skip(state.workspace_scroll.saturating_sub(entries.len()))
+        {
+            if y >= body.bottom() {
+                break;
+            }
+            let rect = Rect::new(body.x, y, content_width, 1);
+            put_text(
+                buffer,
+                rect.x,
+                y,
+                rect.width.saturating_sub(5),
+                &format!("   · {label}"),
+                Style::default().fg(palette.overlay0),
+            );
+            let button = if matches!(action, SpaceAction::Open(_)) {
+                "open"
+            } else {
+                "show"
+            };
+            render_space_button(buffer, rect, button, action.clone(), palette);
+            hits.space_actions.push((rect, action));
+            y = y.saturating_add(1);
+        }
     }
 
     if show_scrollbar {
@@ -391,6 +445,23 @@ pub(crate) fn render_sidebar(
             " new",
             Style::default().fg(palette.overlay0),
         );
+        let toggle_label = if state.show_all_spaces { "hide" } else { "show all" };
+        if workspace_area.width >= 20 {
+            hits.spaces_toggle = Rect::new(
+                workspace_area.x + 6,
+                footer_y,
+                display_width(toggle_label),
+                u16::from(workspace_area.height > 0),
+            );
+            put_text(
+                buffer,
+                hits.spaces_toggle.x,
+                footer_y,
+                hits.spaces_toggle.width,
+                toggle_label,
+                Style::default().fg(palette.overlay0),
+            );
+        }
         let attention = super::super::global_menu::global_menu_attention(snapshot);
         let launcher_width = if attention { 8 } else { 6 }.min(workspace_area.width);
         hits.global_launcher = Rect::new(
@@ -453,6 +524,27 @@ pub(crate) fn render_sidebar(
         "«",
         Style::default().fg(palette.overlay0),
     );
+}
+
+/// Draws a gray action at the right edge of a space row and returns its hit target.
+fn render_space_button(
+    buffer: &mut Buffer,
+    row: Rect,
+    label: &str,
+    action: SpaceAction,
+    palette: &Palette,
+) -> (Rect, SpaceAction) {
+    let width = display_width(label).min(row.width);
+    let rect = Rect::new(row.right().saturating_sub(width + 1), row.y, width, 1);
+    put_text(
+        buffer,
+        rect.x,
+        rect.y,
+        width,
+        label,
+        Style::default().fg(palette.overlay1),
+    );
+    (rect, action)
 }
 
 pub(crate) fn workspace_entries(

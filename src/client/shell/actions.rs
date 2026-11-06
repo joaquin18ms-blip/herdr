@@ -818,6 +818,25 @@ impl ClientShellState {
                 self.complete_copy_operation(session_generation, continue_queue, &mut outcome);
                 return (repaint || outcome.repaint, outcome.actions);
             }
+            PendingEndpointKind::SpaceReopen { command } => {
+                let mut outcome = ClientShellInput::default();
+                if let (
+                    Ok(crate::api::schema::ResponseResult::WorkspaceCreated { root_pane, .. }),
+                    Some(command),
+                ) = (&result, command)
+                {
+                    self.push_endpoint_method(
+                        crate::api::schema::Method::PaneSendText(
+                            crate::api::schema::PaneSendTextParams {
+                                pane_id: root_pane.pane_id.clone(),
+                                text: format!("{command}\n"),
+                            },
+                        ),
+                        &mut outcome,
+                    );
+                }
+                return (result.is_err() || outcome.repaint, outcome.actions);
+            }
             PendingEndpointKind::ReloadConfig => {
                 let repaint = match result {
                     Ok(crate::api::schema::ResponseResult::ConfigReload { .. }) => false,

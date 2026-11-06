@@ -5,7 +5,7 @@ impl ClientContextMenuOverlay {
         use ClientContextMenuAction as Action;
 
         let item = |label, action| ClientContextMenuItem { label, action };
-        match &self.target {
+        let mut items = match &self.target {
             ClientContextMenuTarget::Workspace { is_git: false, .. } => {
                 vec![item("Rename", Action::Rename), item("Close", Action::Close)]
             }
@@ -79,7 +79,14 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+        };
+        if let ClientContextMenuTarget::Workspace { hidden, .. } = &self.target {
+            items.push(item(
+                if *hidden { "Show" } else { "Hide" },
+                Action::ToggleHidden,
+            ));
         }
+        items
     }
 }
 
@@ -108,6 +115,7 @@ impl ClientShellState {
         let collapsed = worktree.is_some_and(|worktree| {
             self.group_is_collapsed(&self.active_endpoint_id, &worktree.key)
         });
+        let hidden = self.known_spaces.is_hidden(&workspace_id);
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Workspace {
                 workspace_id,
@@ -116,6 +124,7 @@ impl ClientShellState {
                 has_worktree_children,
                 close_group,
                 collapsed,
+                hidden,
             },
             x,
             y,
@@ -259,6 +268,10 @@ impl ClientShellState {
             }
             ClientContextMenuAction::RemoveWorktree => {
                 self.begin_worktree_action_for(KeybindAction::RemoveWorktree, workspace_id, outcome)
+            }
+            ClientContextMenuAction::ToggleHidden => {
+                let hidden = !self.known_spaces.is_hidden(&workspace_id);
+                self.set_space_hidden(workspace_id, hidden, outcome);
             }
             ClientContextMenuAction::ToggleGroup => {
                 let key = self.snapshot.as_deref().and_then(|snapshot| {

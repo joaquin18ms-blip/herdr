@@ -100,6 +100,8 @@ pub(super) struct ShellHitMap {
     pub(super) agent_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) agent_max_scroll: usize,
     pub(super) agent_sort_toggle: Rect,
+    pub(super) spaces_toggle: Rect,
+    pub(super) space_actions: Vec<(Rect, super::spaces::SpaceAction)>,
     pub(super) sidebar_divider: Rect,
     pub(super) sidebar_section_divider: Rect,
     pub(super) sidebar_toggle: Rect,
@@ -540,6 +542,7 @@ pub(super) enum ClientContextMenuAction {
     OpenWorktree,
     RemoveWorktree,
     ToggleGroup,
+    ToggleHidden,
     NewTab,
     RenamePane,
     ClearPaneName,
@@ -560,6 +563,7 @@ pub(super) enum ClientContextMenuTarget {
         has_worktree_children: bool,
         close_group: bool,
         collapsed: bool,
+        hidden: bool,
     },
     Tab {
         tab_id: String,
@@ -650,6 +654,9 @@ pub(super) enum PendingEndpointKind {
     ReleaseNotesDismiss,
     PopupCommand,
     ReloadConfig,
+    SpaceReopen {
+        command: Option<String>,
+    },
     IntegrationList,
     IntegrationInstall,
     PrepareWorktreeCreate {
@@ -910,6 +917,9 @@ pub(crate) struct ClientShellState {
     pub(super) pane_dock_press: Option<ClientPaneDockPress>,
     pub(super) collapsed_groups: HashSet<String>,
     pub(super) remote_collapsed_groups: HashMap<ClientEndpointId, HashSet<String>>,
+    pub(super) known_spaces: super::spaces::KnownSpaces,
+    pub(super) known_spaces_modified: Option<std::time::SystemTime>,
+    pub(super) show_all_spaces: bool,
     pub(super) workspace_scroll: usize,
     pub(super) agent_scroll: usize,
     pub(super) pending_agent_reveal: Option<(ClientEndpointId, String)>,
@@ -1085,6 +1095,9 @@ impl ClientShellState {
             pane_dock_press: None,
             collapsed_groups: preferences.collapsed_groups.into_iter().collect(),
             remote_collapsed_groups,
+            known_spaces: Default::default(),
+            known_spaces_modified: None,
+            show_all_spaces: false,
             workspace_scroll: 0,
             agent_scroll: 0,
             pending_agent_reveal: None,
@@ -1220,7 +1233,7 @@ impl ClientShellState {
         if self.mobile_layout_active() {
             render::workspace_entries(snapshot, &empty_collapsed_groups)
         } else {
-            render::workspace_entries(
+            self.visible_workspace_entries(
                 snapshot,
                 self.collapsed_groups_for_endpoint(&self.active_endpoint_id)
                     .unwrap_or(&empty_collapsed_groups),
@@ -1616,6 +1629,7 @@ impl ClientShellState {
             }
         }
         self.snapshot = Some(snapshot);
+        self.sync_known_spaces();
         self.reconcile_pending_workspace_highlight();
         let pending_surface = self.pending_pane_surface.take();
         if let Some(surface) = pending_surface {

@@ -668,7 +668,7 @@ impl ClientShellState {
         let collapsed_groups = self
             .collapsed_groups_for_endpoint(&self.active_endpoint_id)
             .unwrap_or(&empty_collapsed_groups);
-        let entries = render::workspace_entries(snapshot, collapsed_groups);
+        let entries = self.visible_workspace_entries(snapshot, collapsed_groups);
         let last_hit = self
             .hits
             .workspaces
@@ -2063,7 +2063,19 @@ impl ClientShellState {
                 }
                 let workspace_id = (!self.sidebar_collapsed)
                     .then(|| self.active_endpoint_workspace_at(point))
-                    .flatten();
+                    .flatten()
+                    .or_else(|| {
+                        self.hits.space_actions.iter().find_map(|(rect, action)| {
+                            match action {
+                                super::spaces::SpaceAction::Show(id)
+                                    if super::contains(*rect, point) =>
+                                {
+                                    Some(id.clone())
+                                }
+                                _ => None,
+                            }
+                        })
+                    });
                 if let Some(workspace_id) = workspace_id {
                     self.open_workspace_context_menu(workspace_id, mouse.column, mouse.row);
                     outcome.repaint = true;
@@ -2270,6 +2282,21 @@ impl ClientShellState {
                 if super::contains(self.hits.global_launcher, point) {
                     self.toggle_global_menu();
                     outcome.repaint = true;
+                    return;
+                }
+                if super::contains(self.hits.spaces_toggle, point) {
+                    self.show_all_spaces = !self.show_all_spaces;
+                    outcome.repaint = true;
+                    return;
+                }
+                let space_action = self
+                    .hits
+                    .space_actions
+                    .iter()
+                    .find(|(rect, _)| super::contains(*rect, point))
+                    .map(|(_, action)| action.clone());
+                if let Some(action) = space_action {
+                    self.activate_space_action(action, outcome);
                     return;
                 }
                 if super::contains(self.hits.new_workspace, point) {
