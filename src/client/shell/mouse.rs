@@ -575,6 +575,24 @@ impl ClientShellState {
         })
     }
 
+    /// A space dragged out of the sidebar list over a pane docks that space's
+    /// current pane there, same as dragging its tab.
+    fn workspace_dock_drag_at(
+        &self,
+        workspace_id: &str,
+        point: (u16, u16),
+    ) -> Option<ClientChromeDrag> {
+        let active_tab_id = self
+            .snapshot
+            .as_deref()?
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.workspace_id == workspace_id)?
+            .active_tab_id
+            .clone();
+        self.tab_dock_drag_at(&active_tab_id, point)
+    }
+
     fn tab_drop_index_at(&self, point: (u16, u16)) -> Option<usize> {
         let snapshot = self.snapshot.as_deref()?;
         let workspace_id = snapshot.focused_workspace_id.as_deref()?;
@@ -1352,7 +1370,18 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
-                Some(ClientChromeDrag::Workspace { .. }) => {
+                Some(ClientChromeDrag::Workspace {
+                    source_workspace_id,
+                    ..
+                }) => {
+                    // The list's drop rows only check height, so test the pane first.
+                    if let Some(dock) =
+                        self.workspace_dock_drag_at(&source_workspace_id.clone(), point)
+                    {
+                        self.chrome_drag = Some(dock);
+                        outcome.repaint = true;
+                        return;
+                    }
                     let target = self.workspace_drop_target_at(point);
                     if let Some(ClientChromeDrag::Workspace {
                         target: current, ..
@@ -1374,7 +1403,11 @@ impl ClientShellState {
                     let source_workspace_id = press.workspace_id.clone();
                     let draggable = self.endpoint_workspace_is_draggable(press);
                     if draggable {
-                        if let Some(target) = self.workspace_drop_target_at(point) {
+                        if let Some(dock) = self.workspace_dock_drag_at(&source_workspace_id, point)
+                        {
+                            self.chrome_drag = Some(dock);
+                            outcome.repaint = true;
+                        } else if let Some(target) = self.workspace_drop_target_at(point) {
                             self.chrome_drag = Some(ClientChromeDrag::Workspace {
                                 source_workspace_id,
                                 target: Some(target),

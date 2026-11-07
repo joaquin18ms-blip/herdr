@@ -1631,3 +1631,65 @@ fn pane_frame_drag_onto_agent_list_undocks_but_list_row_drag_does_not() {
             if matches!(&request.method, crate::api::schema::Method::PaneUndock(_))
     )));
 }
+
+#[test]
+fn space_row_dragged_onto_a_pane_docks_its_agent_there() {
+    let mut projected = snapshot();
+    let mut workspace = projected.workspaces[0].clone();
+    workspace.workspace_id = "ws_2".into();
+    workspace.active_tab_id = "tab_2".into();
+    workspace.focused = false;
+    projected.workspaces.push(workspace);
+    let mut tab = projected.tabs[0].clone();
+    tab.tab_id = "tab_2".into();
+    tab.workspace_id = "ws_2".into();
+    tab.focused = false;
+    projected.tabs.push(tab);
+    let mut pane = projected.panes[0].clone();
+    pane.pane_id = "pane_2".into();
+    pane.tab_id = "tab_2".into();
+    pane.workspace_id = "ws_2".into();
+    pane.focused = false;
+    projected.panes.push(pane);
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(projected));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("pane frame");
+    let row = state
+        .hits
+        .workspaces
+        .iter()
+        .find(|hit| hit.workspace_id == "ws_2")
+        .expect("ws_2 row")
+        .rect;
+    let pane = state.hits.panes[0].rect;
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Down(MouseButton::Left),
+        row.x + 2,
+        row.y,
+    )]);
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        row.x + 3,
+        row.y,
+    )]);
+    let edge = (pane.right() - 2, pane.y + pane.height / 2);
+    state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Drag(MouseButton::Left),
+        edge.0,
+        edge.1,
+    )]);
+    assert!(matches!(
+        &state.chrome_drag,
+        Some(ClientChromeDrag::PaneDock { source_pane_id, .. }) if source_pane_id == "pane_2"
+    ));
+    let release = state.handle_raw_events(vec![raw_mouse(
+        MouseEventKind::Up(MouseButton::Left),
+        edge.0,
+        edge.1,
+    )]);
+    assert_eq!(
+        dropped_dock_side(&release, "pane_2", "pane_1"),
+        Some(crate::api::schema::PaneDirection::Right)
+    );
+}
