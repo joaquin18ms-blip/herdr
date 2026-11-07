@@ -79,6 +79,10 @@ impl ClientContextMenuOverlay {
                 ]);
                 items
             }
+            ClientContextMenuTarget::NewSpace => vec![
+                item("Under selected", Action::NewSpaceUnderSelected),
+                item("From scratch...", Action::NewSpaceFromScratch),
+            ],
         };
         if let ClientContextMenuTarget::Workspace { hidden, .. } = &self.target {
             items.push(item(
@@ -126,6 +130,15 @@ impl ClientShellState {
                 collapsed,
                 hidden,
             },
+            x,
+            y,
+            highlighted: 0,
+        }));
+    }
+
+    pub(super) fn open_new_space_menu(&mut self, x: u16, y: u16) {
+        self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
+            target: ClientContextMenuTarget::NewSpace,
             x,
             y,
             highlighted: 0,
@@ -224,6 +237,37 @@ impl ClientShellState {
                 action,
                 outcome,
             ),
+            ClientContextMenuTarget::NewSpace => match action {
+                ClientContextMenuAction::NewSpaceUnderSelected => self.record_binding(
+                    crate::input::KeybindMatch::Action(crate::input::KeybindAction::NewWorkspace),
+                    outcome,
+                ),
+                // "Desde cero" corre el comando propio con description "new space"
+                // (keys.command en config.toml), que pide nombre y crea la carpeta.
+                ClientContextMenuAction::NewSpaceFromScratch => {
+                    let command = self
+                        .config
+                        .keybinds
+                        .keybinds
+                        .custom_commands
+                        .iter()
+                        .find(|command| command.description.as_deref() == Some("new space"))
+                        .cloned();
+                    match command {
+                        Some(command) => self.record_binding(
+                            crate::input::KeybindMatch::Command(command),
+                            outcome,
+                        ),
+                        None => {
+                            self.receive_endpoint_unavailable(
+                                "No [[keys.command]] with description \"new space\" in config.toml"
+                                    .into(),
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            },
         }
         outcome.repaint = true;
     }

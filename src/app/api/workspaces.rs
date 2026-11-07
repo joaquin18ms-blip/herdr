@@ -66,7 +66,13 @@ impl App {
             Err((code, message)) => return encode_error(id, &code, message),
         };
         match self.create_workspace_with_launch_env(cwd, params.focus, extra_env) {
-            Ok(index) => {
+            Ok(mut index) => {
+                // Creado a partir de otro space: queda justo debajo de ese, no al final.
+                if let Some(source) = source_workspace_index {
+                    if self.state.move_workspace(index, source + 1) {
+                        index = source + 1;
+                    }
+                }
                 if let Some(label) = params.label {
                     if let Some(workspace) = self.state.workspaces.get_mut(index) {
                         workspace.set_custom_name(label);

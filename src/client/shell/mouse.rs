@@ -2333,12 +2333,8 @@ impl ClientShellState {
                     return;
                 }
                 if super::contains(self.hits.new_workspace, point) {
-                    self.record_binding(
-                        crate::input::KeybindMatch::Action(
-                            crate::input::KeybindAction::NewWorkspace,
-                        ),
-                        outcome,
-                    );
+                    self.open_new_space_menu(mouse.column, mouse.row.saturating_sub(3));
+                    outcome.repaint = true;
                     return;
                 }
                 if super::contains(self.hits.new_tab, point) {

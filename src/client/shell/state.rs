@@ -552,6 +552,8 @@ pub(super) enum ClientContextMenuAction {
     Zoom,
     ToggleRightClickPassthrough,
     ClosePane,
+    NewSpaceUnderSelected,
+    NewSpaceFromScratch,
 }
 
 #[derive(Debug)]
@@ -576,6 +578,8 @@ pub(super) enum ClientContextMenuTarget {
         has_manual_label: bool,
         right_click_passthrough: bool,
     },
+    /// Menu del boton "new" del sidebar: space debajo del seleccionado o desde cero.
+    NewSpace,
 }
 
 #[derive(Debug)]
